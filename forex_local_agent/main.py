@@ -271,15 +271,48 @@ class ForexAgent:
         except Exception as e:
             logger.error(f"Error checking closed trades: {e}", exc_info=True)
 
-    # ── H1 Candle Monitor ─────────────────────────────────────────────────
+    # ── Dynamic Candle Monitor ───────────────────────────────────────────
 
-    async def monitor_h1_candle(self):
-        """Wait until the next H1 candle close."""
+    async def monitor_candle_close(self):
+        """Wait until the next candle close for the configured timeframe (M1, M5, M15, M30, H1, H4, D1)."""
         now = datetime.utcnow()
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        sleep_seconds = (next_hour - now).total_seconds()
+        tf = self.timeframe.upper()
 
-        logger.info(f"⏳ Waiting {sleep_seconds:.0f}s for next H1 candle close at {next_hour.strftime('%H:%M')} UTC...")
+        if tf == "M1":
+            next_close = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        elif tf == "M5":
+            next_minute = ((now.minute // 5) + 1) * 5
+            if next_minute >= 60:
+                next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            else:
+                next_close = now.replace(minute=next_minute, second=0, microsecond=0)
+        elif tf == "M15":
+            next_minute = ((now.minute // 15) + 1) * 15
+            if next_minute >= 60:
+                next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            else:
+                next_close = now.replace(minute=next_minute, second=0, microsecond=0)
+        elif tf == "M30":
+            next_minute = 30 if now.minute < 30 else 60
+            if next_minute >= 60:
+                next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            else:
+                next_close = now.replace(minute=30, second=0, microsecond=0)
+        elif tf == "H1":
+            next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        elif tf == "H4":
+            next_hour = ((now.hour // 4) + 1) * 4
+            if next_hour >= 24:
+                next_close = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            else:
+                next_close = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+        elif tf == "D1":
+            next_close = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        else:
+            next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+
+        sleep_seconds = max((next_close - now).total_seconds(), 5)
+        logger.info(f"⏳ Waiting {sleep_seconds:.0f}s for next {tf} candle close at {next_close.strftime('%H:%M:%S')} UTC...")
 
         # Sleep in chunks so we can check the running flag
         while sleep_seconds > 0 and self.running:
@@ -328,13 +361,13 @@ class ForexAgent:
                     schedule.run_pending()
 
                     if not first_run:
-                        # Wait for H1 candle close
-                        candle_ready = await self.monitor_h1_candle()
+                        # Wait for candle close (M5, H1, etc.)
+                        candle_ready = await self.monitor_candle_close()
                         if not candle_ready:
                             break
 
                         logger.info("═══════════════════════════════════════════════")
-                        logger.info(f"🕐 H1 candle closed at {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
+                        logger.info(f"🕐 {self.timeframe.upper()} candle closed at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
                         logger.info("═══════════════════════════════════════════════")
                     else:
                         first_run = False

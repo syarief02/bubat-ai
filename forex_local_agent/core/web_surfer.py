@@ -163,3 +163,4 @@ class WebSurfer:
             return f"Failed to retrieve page: HTTP {resp.status_code}"
         except Exception as e:
             return f"Scrape error: {str(e)}"
+
