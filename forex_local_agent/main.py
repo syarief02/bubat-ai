@@ -277,19 +277,26 @@ class ForexAgent:
 
                 retry_count = 0  # Reset on successful connection
 
+                first_run = True
                 # ── Main trading loop ─────────────────────────────────────
                 while self.running:
                     # Run any scheduled tasks (e.g., weekly model check)
                     schedule.run_pending()
 
-                    # Wait for H1 candle close
-                    candle_ready = await self.monitor_h1_candle()
-                    if not candle_ready:
-                        break
+                    if not first_run:
+                        # Wait for H1 candle close
+                        candle_ready = await self.monitor_h1_candle()
+                        if not candle_ready:
+                            break
 
-                    logger.info("═══════════════════════════════════════════════")
-                    logger.info(f"🕐 H1 candle closed at {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
-                    logger.info("═══════════════════════════════════════════════")
+                        logger.info("═══════════════════════════════════════════════")
+                        logger.info(f"🕐 H1 candle closed at {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
+                        logger.info("═══════════════════════════════════════════════")
+                    else:
+                        first_run = False
+                        logger.info("═══════════════════════════════════════════════")
+                        logger.info("🚀 Executing initial market analysis cycle on startup...")
+                        logger.info("═══════════════════════════════════════════════")
 
                     # Analyze each configured symbol
                     for symbol in self.symbols:

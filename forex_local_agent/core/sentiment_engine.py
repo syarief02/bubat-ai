@@ -113,8 +113,36 @@ class SentimentEngine:
                     
             return filtered_results
         except Exception as e:
-            logger.error(f"Error searching news for {query}: {e}")
-            return []
+            logger.warning(f"SearXNG unavailable at {self.searxng_url} ({e}). Falling back to live financial RSS news feed...")
+            return await self._fallback_search_news(query, max_results)
+
+    async def _fallback_search_news(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        """Fallback news retrieval via live financial RSS when SearXNG is offline."""
+        try:
+            import xml.etree.ElementTree as ET
+            feed_url = f"https://news.google.com/rss/search?q={query}+forex&hl=en-US&gl=US&ceid=US:en"
+            async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                resp = await client.get(feed_url)
+                if resp.status_code == 200:
+                    root = ET.fromstring(resp.text)
+                    items = root.findall(".//item")
+                    results = []
+                    for it in items[:max_results]:
+                        title = it.find("title").text if it.find("title") is not None else ""
+                        link = it.find("link").text if it.find("link") is not None else ""
+                        pub_date = it.find("pubDate").text if it.find("pubDate") is not None else ""
+                        desc = it.find("description").text if it.find("description") is not None else ""
+                        results.append({
+                            "title": title,
+                            "url": link,
+                            "published_date": pub_date,
+                            "snippet": desc
+                        })
+                    logger.info(f"Retrieved {len(results)} live news headlines via fallback RSS feed.")
+                    return results
+        except Exception as err:
+            logger.error(f"Fallback news retrieval failed: {err}")
+        return []
 
     async def scrape_article(self, url: str) -> str:
         """
