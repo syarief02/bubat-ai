@@ -20,8 +20,20 @@ except ImportError:
     from forex_local_agent.core.web_surfer import WebSurfer
 
 DEFAULT_SYMBOLS = [
-    "EURUSD", "GBPUSD", "USDJPY", "USDCHF",
-    "AUDUSD", "NZDUSD", "USDCAD", "XAUUSD"
+    # Majors
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD",
+    # Euro crosses
+    "EURGBP", "EURJPY", "EURCHF", "EURAUD", "EURNZD", "EURCAD",
+    # Pound crosses
+    "GBPJPY", "GBPCHF", "GBPAUD", "GBPNZD", "GBPCAD",
+    # Aussie crosses
+    "AUDJPY", "AUDCHF", "AUDNZD", "AUDCAD",
+    # Kiwi crosses
+    "NZDJPY", "NZDCHF", "NZDCAD",
+    # Loonie & Swissy crosses
+    "CADJPY", "CADCHF", "CHFJPY",
+    # Metal
+    "XAUUSD"
 ]
 
 class MarketScanner:
@@ -59,11 +71,10 @@ class MarketScanner:
 
         try:
             for sym in self.symbols:
+                mt5.symbol_select(sym, True)
                 info = mt5.symbol_info(sym)
                 if not info:
                     continue
-                if not info.visible:
-                    mt5.symbol_select(sym, True)
 
                 tick = mt5.symbol_info_tick(sym)
                 if not tick:

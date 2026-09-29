@@ -115,6 +115,7 @@ class MT5Engine:
 
     def get_technical_data(self, symbol: str, timeframe: str = "H1", bars: int = 100) -> Dict:
         tf = self.tf_map.get(timeframe, mt5.TIMEFRAME_H1)
+        mt5.symbol_select(symbol, True)
         rates = mt5.copy_rates_from_pos(symbol, tf, 0, bars)
         if rates is None:
             logger.error(f"Failed to get rates for {symbol}")
