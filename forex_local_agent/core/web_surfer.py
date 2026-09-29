@@ -74,9 +74,19 @@ class WebSurfer:
         Fast, robust, never blocked.
         """
         results = []
-        # 1. Google News RSS
+        # 1. Format query cleanly for forex pairs (e.g. EURUSD -> "EUR USD forex", XAUUSD -> "XAU USD gold forex")
+        clean_q = query.strip()
+        if len(clean_q) == 6 and clean_q.isalpha() and clean_q.isupper():
+            if clean_q == "XAUUSD":
+                search_term = "XAU USD gold forex"
+            else:
+                search_term = f"{clean_q[:3]} {clean_q[3:]} forex"
+        else:
+            search_term = f"{clean_q} forex" if "forex" not in clean_q.lower() else clean_q
+
+        # Google News RSS
         try:
-            encoded_query = urllib.parse.quote(f"{query} forex")
+            encoded_query = urllib.parse.quote(search_term)
             rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
             resp = httpx.get(rss_url, headers=self.headers, timeout=6.0)
             if resp.status_code == 200:
@@ -96,26 +106,6 @@ class WebSurfer:
                     })
         except Exception as e:
             logger.warning(f"Google News RSS search failed: {e}")
-
-        # 2. Investing.com RSS fallback if results are sparse
-        if len(results) < 3:
-            try:
-                resp = httpx.get("https://www.investing.com/rss/news_1.rss", headers=self.headers, timeout=5.0)
-                if resp.status_code == 200:
-                    root = ET.fromstring(resp.text)
-                    for item in root.findall(".//item")[:3]:
-                        title = item.find("title").text if item.find("title") is not None else ""
-                        pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-                        link = item.find("link").text if item.find("link") is not None else ""
-                        results.append({
-                            "title": title,
-                            "source": "Investing.com",
-                            "published_at": pub_date,
-                            "snippet": "",
-                            "url": link
-                        })
-            except Exception as e:
-                logger.warning(f"Investing.com RSS search failed: {e}")
 
         return results[:max_results]
 

@@ -84,18 +84,23 @@ class MemoryManager:
                 logger.error(f"Error storing episode in Mem0: {e}")
 
     async def query_similar(self, current_conditions: Dict, top_k: int = 5) -> List[Dict]:
-        """Find similar historical episodes."""
+        """Find similar historical episodes for the current symbol."""
+        symbol = current_conditions.get("symbol")
         if self.use_fallback:
-            # Very basic fallback: just return the most recent top_k
             data = self._read_fallback()
-            return data["episodes"][-top_k:]
+            episodes = data.get("episodes", [])
+            # Filter strictly by matching symbol to avoid cross-pair hallucination contamination
+            if symbol:
+                episodes = [ep for ep in episodes if ep.get("symbol") == symbol]
+            return episodes[-top_k:]
         else:
             try:
-                query_text = f"Find conditions similar to: {json.dumps(current_conditions)}"
+                query_text = f"Find trade conditions for symbol {symbol}: {json.dumps(current_conditions)}"
                 results = self.mem0.search(query_text, user_id="agent", limit=top_k)
-                # Parse results appropriately based on Mem0 return format
-                # Usually it returns a list of dicts with a 'metadata' key
-                return [r.get('metadata', r) for r in results]
+                episodes = [r.get('metadata', r) for r in results]
+                if symbol:
+                    episodes = [ep for ep in episodes if ep.get("symbol") == symbol]
+                return episodes
             except Exception as e:
                 logger.error(f"Error querying Mem0: {e}")
                 return []
@@ -141,8 +146,17 @@ class MemoryManager:
         await self.store_episode(record)
 
     def _format_episode_for_prompt(self, episodes: List[Dict]) -> List[str]:
-        """Format episodes as readable strings for LLM context."""
+        """Format past trade episodes concisely to prevent prompt parrot copying."""
         formatted = []
         for i, ep in enumerate(episodes):
-            formatted.append(f"Episode {i+1}:\n{json.dumps(ep, indent=2)}")
+            sym = ep.get("symbol", "N/A")
+            dec = ep.get("decision", {})
+            decision_val = dec.get("decision", "N/A") if isinstance(dec, dict) else "N/A"
+            conf = dec.get("confidence_score", "N/A") if isinstance(dec, dict) else "N/A"
+            tech = ep.get("technical_data", {})
+            bias = tech.get("technical_bias", "N/A") if isinstance(tech, dict) else "N/A"
+            outcome = ep.get("outcome", "PENDING")
+            formatted.append(
+                f"Historical Episode {i+1} [{sym}]: Bias={bias}, Decision={decision_val}, Confidence={conf}, Outcome={outcome}"
+            )
         return formatted
