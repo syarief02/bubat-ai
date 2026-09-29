@@ -19,6 +19,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from loguru import logger
 
+# Ensure directory is on sys.path
+agent_root = str(Path(__file__).resolve().parent)
+if agent_root not in sys.path:
+    sys.path.insert(0, agent_root)
+
 from core.mt5_engine import MT5Engine
 from core.sentiment_engine import SentimentEngine
 from core.agent_logic import AgentLogic, TradeDecision
@@ -26,6 +31,7 @@ from core.openclaw_bridge import OpenClawBridge, start_webhook_server
 from learning.memory_manager import MemoryManager
 from learning.skill_factory import SkillFactory
 from maintenance.model_updater import ModelUpdater
+from core.supabase_manager import SupabaseManager
 
 # ── Logging Configuration ────────────────────────────────────────────────────
 logger.remove()
@@ -61,6 +67,7 @@ class ForexAgent:
         self.memory = MemoryManager(str(self.config_path))
         self.skill_factory = SkillFactory(str(self.config_path))
         self.model_updater = ModelUpdater(str(self.config_path))
+        self.supabase = SupabaseManager()
 
         # Trading parameters from config
         self.symbols = self.config.get("trading", {}).get("symbols", ["EURUSD"])
@@ -135,6 +142,7 @@ class ForexAgent:
             )
 
             # g. If actionable signal, calculate deterministic trade parameters & propose
+            trade_params = None
             if decision.decision != "WAIT" and decision.confidence_score >= self.confidence_threshold:
                 logger.info(f"[{symbol}] Signal meets threshold. Calculating deterministic trade parameters...")
 
@@ -182,10 +190,33 @@ class ForexAgent:
                                 f"EXECUTED {trade_params['action']} {symbol} | Ticket: {result.get('ticket')} | Lot: {result.get('lot')}",
                                 level="INFO"
                             )
+
+                        # Sync executed trade to Supabase
+                        self.supabase.log_trade_execution(
+                            symbol=symbol,
+                            order_type=trade_params["action"],
+                            volume=result.get("lot", trade_params["lot"]),
+                            open_price=trade_params["entry"],
+                            stop_loss=trade_params["sl"],
+                            take_profit=trade_params["tp"],
+                            ticket_id=result.get("ticket"),
+                            status="OPEN" if result.get("status") == "success" else "REJECTED",
+                            execution_result=result,
+                        )
                     else:
                         logger.info(f"[{symbol}] Trade NOT approved (rejected or timed out).")
             else:
                 logger.info(f"[{symbol}] Decision is WAIT or confidence below threshold. No action.")
+
+            # Sync decision to Supabase
+            self.supabase.log_decision(
+                symbol=symbol,
+                decision=decision.decision,
+                confidence=decision.confidence_score,
+                market_sentiment=decision.market_sentiment,
+                reasoning=decision.reasoning,
+                trade_params=trade_params if (decision.decision != "WAIT" and trade_params and trade_params.get("status") != "error") else None,
+            )
 
             # h. Store episode in memory
             episode = {
@@ -201,6 +232,7 @@ class ForexAgent:
 
         except Exception as e:
             logger.error(f"[{symbol}] Error in analysis cycle: {e}", exc_info=True)
+            self.supabase.log_telemetry("ForexAgent", "ANALYSIS_CYCLE_ERROR", {"symbol": symbol, "error": str(e)}, status="ERROR")
             await self.openclaw.send_alert(f"Analysis cycle error for {symbol}: {e}", level="CRITICAL")
             return None
 

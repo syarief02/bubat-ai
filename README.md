@@ -52,18 +52,26 @@ bubat AI/
 ├── .env                                  # Workspace environment variables (Supabase, API keys)
 ├── .gitignore                            # Protection against committing secrets, logs, cache
 ├── README.md                             # Complete documentation and user guide
+├── assistant.bat                         # Desktop 1-click launcher for Local Autonomous Agent
+├── run_agent.bat                         # Desktop 1-click launcher for Forex Trading Loop
+├── chat.bat                              # Desktop 1-click launcher for Interactive Forex Chat
+├── stop_all.bat                          # Desktop 1-click launcher to kill all agents & Ollama
+├── local_assistant.py                    # Local Autonomous System & Coding Agent (Tool Engine)
 ├── Local_Autonomous_Forex_AI_Master_Blueprint.txt # Original system specification
 └── forex_local_agent/                    # Core agent codebase
     ├── config.json                       # Central system configuration
     ├── Modelfile                         # Custom Ollama model specification (32k context)
     ├── requirements.txt                  # Python dependencies
     ├── main.py                           # Master orchestration loop & candle monitor
+    ├── chat.py                           # Forex market analysis CLI chat
+    ├── local_assistant.py                # Autonomous agent copy
     │
     ├── core/
     │   ├── agent_logic.py                # Qualitative LLM reasoning (Ollama + Pydantic)
     │   ├── mt5_engine.py                 # MT5 driver + Deterministic ATR Math Calculator
     │   ├── openclaw_bridge.py            # WhatsApp approval gateway & email alerts
-    │   └── sentiment_engine.py           # SearXNG news engine + live RSS fallback
+    │   ├── sentiment_engine.py           # SearXNG news engine + live RSS fallback
+    │   └── supabase_manager.py           # Cloud Supabase & PostgreSQL telemetry sync
     │
     ├── learning/
     │   ├── memory_manager.py             # ChromaDB / Mem0 episodic memory & recall
@@ -318,4 +326,55 @@ python -c "import asyncio; from main import ForexAgent; a = ForexAgent(); a.mt5_
 - Reflexion rules: `forex_local_agent/learning/learned_rules.md`
 
 #### Q: How do I stop the agent gracefully?
-**A:** Press `Ctrl + C` in the PowerShell terminal. The agent intercepts the SIGINT signal, closes any open webhook sockets, cleanly terminates the MT5 connection, and exits safely.
+**A:** Press `Ctrl + C` in the PowerShell terminal, or double-click `stop_all.bat`.
+
+---
+
+## ⚡ 1-Click Desktop Batch Runners
+
+For zero-friction operation, double-clickable `.bat` scripts are provided in the root directory:
+
+| Script | Purpose | Description |
+|---|---|---|
+| `assistant.bat` | **Autonomous Agent** | Launches the tool-enabled autonomous system assistant with PowerShell, File, DB, and MT5 tools. |
+| `run_agent.bat` | **Forex Trading Loop** | Starts Ollama server and launches the live autonomous trading loop (`main.py`). |
+| `chat.bat` | **Forex Interactive Chat** | Opens interactive CLI chat with `agent-brain:32k` to ask questions about markets and live MT5 technicals. |
+| `stop_all.bat` | **Bulletproof Terminator** | Kills all background Ollama servers, Python trading agents, and assistant processes. |
+
+---
+
+## 🦾 Bubat AI Local Autonomous System & Coding Agent (`local_assistant.py`)
+
+The workspace includes a **fully autonomous agentic loop** powered by your local Ollama model (`agent-brain:32k`) running on your NVIDIA RTX 4060 GPU.
+
+Unlike standard chatbots that can only output text, this assistant possesses **"hands" (tools)** to directly inspect and manipulate your machine:
+
+### Available Tools:
+1. `execute_command(command)`: Runs shell commands via PowerShell on Windows (e.g. `dir`, `git status`, `python script.py`).
+2. `read_file(path, start_line, end_line)`: Inspects code and configuration files with line slicing.
+3. `write_file(path, content, mode)`: Autonomously creates or edits files.
+4. `list_directory(path, recursive)`: Explores file and directory trees.
+5. `query_database(sql)`: Executes SQL statements directly on your Supabase PostgreSQL database.
+6. `get_system_status()`: Checks MT5 terminal connection, account equity, balance, open positions, and disk space.
+7. `web_search(query)`: Performs live web search via Google News RSS for live documentation or macro news.
+
+### Example Prompts you can ask in `assistant.bat`:
+- *"Check if MetaTrader 5 is connected and show my account balance and equity."*
+- *"Query the database to see the recent trade decisions from the forex_trade_decisions table."*
+- *"Check the git status of this repository and list any uncommitted files."*
+- *"Inspect `forex_local_agent/config.json` and tell me what symbols are active."*
+- *"Create a test python script that checks my disk space and run it."*
+
+---
+
+## 🗄️ Supabase Cloud & PostgreSQL Database Integration
+
+All trade signals, executions, and agent telemetry are synchronized directly to your cloud Supabase database:
+
+### Tables Managed:
+- **`forex_trade_decisions`**: Stores qualitative LLM decisions, ATR math calculations (SL, TP, lot size, confidence, sentiment), and approval states.
+- **`forex_executed_trades`**: Stores MT5 execution records with broker ticket IDs, open/close prices, lot volumes, and execution results.
+- **`ai_agent_telemetry`**: Stores system health audits, error logs, and diagnostic telemetry.
+
+Both the PostgREST REST client (`supabase-py`) and direct PostgreSQL connection (`psycopg2`) are integrated with automatic failover in `forex_local_agent/core/supabase_manager.py`.
+

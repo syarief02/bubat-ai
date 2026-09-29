@@ -16,7 +16,7 @@ powershell -Command "Stop-Process -Name ollama, 'ollama app' -Force -ErrorAction
 :: 2. Terminate Python agent processes
 echo [*] Stopping Python trading agents...
 taskkill /F /FI "WINDOWTITLE eq Bubat AI*" /T 2>nul
-powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'main.py|chat.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'main.py|chat.py|local_assistant.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 
 echo.
 echo ====================================================================
