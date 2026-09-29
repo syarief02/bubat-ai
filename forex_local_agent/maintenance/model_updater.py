@@ -2,7 +2,7 @@ import httpx
 import asyncio
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Literal
 from loguru import logger
 from pathlib import Path
@@ -196,7 +196,7 @@ Scenario: EURUSD is showing strong bullish momentum, RSI is 40.
     def _log_audition(self, result: AuditionResult):
         try:
             log_entry = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "model": result.model_name,
                 "schema_passed": result.schema_test_passed,
                 "coding_passed": result.coding_test_passed,

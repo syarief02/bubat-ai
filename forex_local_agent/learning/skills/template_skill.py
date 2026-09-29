@@ -4,7 +4,7 @@ Skills should be self-contained and expose a validate() and execute() method.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 import pandas as pd
 import pandas_ta as ta
@@ -24,7 +24,7 @@ class TemplateSkill:
             version="1.0.0",
             description="Detects RSI divergences on price data",
             author="System",
-            created_at=datetime.utcnow().isoformat()
+            created_at=datetime.now(timezone.utc).isoformat()
         )
     
     def validate(self, data: pd.DataFrame) -> bool:

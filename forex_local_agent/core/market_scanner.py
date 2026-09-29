@@ -41,7 +41,6 @@ class MarketScanner:
                     self.symbols = DEFAULT_SYMBOLS
             else:
                 self.symbols = DEFAULT_SYMBOLS
-
         self.surfer = WebSurfer()
 
     def scan_and_rank(self) -> Dict[str, Any]:

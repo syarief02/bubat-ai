@@ -15,7 +15,7 @@ import sys
 import threading
 import schedule
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from loguru import logger
 
@@ -220,7 +220,7 @@ class ForexAgent:
 
             # h. Store episode in memory
             episode = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "symbol": symbol,
                 "technical_data": tech_data,
                 "news_headlines": news_data.get("headlines", []),
@@ -241,7 +241,7 @@ class ForexAgent:
     async def check_closed_trades(self):
         """Check recently closed trades and trigger reflexion on losses."""
         try:
-            since = datetime.utcnow() - timedelta(hours=2)
+            since = datetime.now(timezone.utc) - timedelta(hours=2)
             closed_trades = self.mt5_engine.check_closed_trades(since)
 
             for trade in closed_trades:
@@ -254,7 +254,7 @@ class ForexAgent:
 
                     # Append new rule to learned_rules.md
                     rules_path = Path("learning/learned_rules.md")
-                    new_rule = f"\n\nRULE #{datetime.utcnow().strftime('%Y%m%d%H%M')} [{post_mortem.trade_symbol}]: {post_mortem.new_rule}\n"
+                    new_rule = f"\n\nRULE #{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')} [{post_mortem.trade_symbol}]: {post_mortem.new_rule}\n"
                     new_rule += f"  Root cause: {post_mortem.root_cause}\n"
                     new_rule += f"  Lesson: {post_mortem.lesson_learned}\n"
 
@@ -275,7 +275,7 @@ class ForexAgent:
 
     async def monitor_candle_close(self):
         """Wait until the next candle close for the configured timeframe (M1, M5, M15, M30, H1, H4, D1)."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         tf = self.timeframe.upper()
 
         if tf == "M1":
@@ -367,7 +367,7 @@ class ForexAgent:
                             break
 
                         logger.info("═══════════════════════════════════════════════")
-                        logger.info(f"🕐 {self.timeframe.upper()} candle closed at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                        logger.info(f"🕐 {self.timeframe.upper()} candle closed at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
                         logger.info("═══════════════════════════════════════════════")
                     else:
                         first_run = False
