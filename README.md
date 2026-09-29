@@ -319,7 +319,7 @@ The central configuration file is located at [`forex_local_agent/config.json`](f
   "risk_parameters": {
     "max_lot_size": 0.1,
     "max_drawdown_pct": 2.0,
-    "max_open_trades": 3,
+    "max_open_trades": 10,
     "confidence_threshold": 0.80,
     "approval_timeout_seconds": 300,
     "risk_per_trade_pct": 1.5,

@@ -42,7 +42,7 @@ class MT5Engine:
         risk = self.config.get("risk_parameters", {})
         self.max_lot_size = risk.get("max_lot_size", 0.1)
         self.max_drawdown_pct = risk.get("max_drawdown_pct", 2.0)
-        self.max_open_trades = risk.get("max_open_trades", 3)
+        self.max_open_trades = risk.get("max_open_trades", 10)
         self.risk_per_trade_pct = risk.get("risk_per_trade_pct", 1.5)
         self.atr_period = risk.get("atr_period", 14)
         self.atr_multiplier_sl = risk.get("atr_multiplier_sl", 1.5)
