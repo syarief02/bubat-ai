@@ -1,0 +1,347 @@
+================================================================================
+MASTER IMPLEMENTATION SPECIFICATION: LOCAL AUTONOMOUS FOREX AI AGENT & WORKSPACE
+Target Environment: Local Machine / Private Dedicated VPS (Windows / Linux)
+System Admin / Emergency Contact: hello@syariefazman.com
+================================================================================
+
+[DIRECTIVE FOR CODE BUILDER / AGENT ENGINE]
+This document constitutes the end-to-end technical specification for building a 
+100% free, fully local, autonomous Forex trading and AI development ecosystem.
+It eliminates external API subscriptions (including Claude Opus, OpenAI, Perplexity)
+by routing reasoning, execution, web search, coding assistance, skill generation, 
+and model upgrades through locally hosted, open-weights infrastructure.
+
+Read this document in its entirety and implement the system module by module.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+1. System Architecture & Component Mapping
+2. Directory Structure & Workspace Layout
+3. Phase 1: Local LLM Engine & Context Expansion (Ollama)
+4. Phase 2: Autonomous Senses & Web Scraping (SearXNG + Crawl4AI)
+5. Phase 3: Claude Chat & Research Replacement (Open WebUI)
+6. Phase 4: Claude Coding Replacement (VS Code + Cline)
+7. Phase 5: Communication, Alerts & Human-in-the-Loop (OpenClaw)
+8. Phase 6: Trading Execution & Deterministic Risk Wall (MetaTrader 5)
+9. Phase 7: Live Fundamental & Technical Multi-Agent Analysis
+10. Phase 8: Local Lifelong Learning & Tool Creation (Skills, Reflexion, Mem0)
+11. Phase 9: Autonomous Model Discovery, Audition & Hot-Swap Upgrade
+12. Phase 10: Master Orchestration Loop & Crash Resilience
+13. Security Directives & Hardcoded Constraints
+
+================================================================================
+1. SYSTEM ARCHITECTURE & COMPONENT MAPPING
+================================================================================
+- Host Runtime: Python 3.10+
+- Terminal Execution: MetaTrader 5 Terminal (bridged via `MetaTrader5` Python API)
+- Primary Reasoning Engine: Ollama running on localhost:11434
+- Core Model: Qwen 2.5 Coder (7B, 14B, or 32B based on system VRAM/RAM)
+- Live Web Retrieval: Local SearXNG instance (Docker, port 8080)
+- Content Ingestion: Crawl4AI (Async headless web-to-markdown extraction)
+- Interactive Chat UI: Open WebUI (Docker, port 3000)
+- Autonomous IDE Agent: Cline extension inside VS Code
+- Mobile Remote Gateway: OpenClaw (WhatsApp integration for trade approvals/alerts)
+- Output Determinism: Pydantic schemas validating all model inferences
+- Memory & Continuous Evolution:
+  * Dynamic Action Generation: `/skills/` repository (auto-written Python scripts)
+  * Error Post-Mortems: `learned_rules.md` (Reflexion framework)
+  * Episodic Trade History: Mem0 local vector storage
+- Autonomous Upgrade Engine: `model_updater.py` (SearXNG library monitor, background pull, JSON verification test, config hot-swap)
+
+================================================================================
+2. DIRECTORY STRUCTURE & WORKSPACE LAYOUT
+================================================================================
+Create the project root directory `/forex_local_agent` with the following layout:
+
+/forex_local_agent
+│
+├── config.json                     # Active model, risk parameters, MT5 credentials
+├── requirements.txt                # Python environment dependencies
+├── main.py                         # Master execution loop (triggered on H1 candle close)
+│
+├── core/
+│   ├── __init__.py
+│   ├── mt5_engine.py               # MT5 connection, candle polling, order dispatch
+│   ├── sentiment_engine.py         # SearXNG query and Crawl4AI markdown extractor
+│   ├── agent_logic.py              # LLM system prompts, JSON parsing via Pydantic
+│   └── openclaw_bridge.py          # WhatsApp approval webhooks & emergency dispatch
+│
+├── learning/
+│   ├── __init__.py
+│   ├── memory_manager.py           # Mem0 episodic storage & vector retrieval
+│   ├── skill_factory.py            # Self-coding, testing, and committing new tools
+│   ├── learned_rules.md            # Cumulative lessons, post-mortems, user overrides
+│   └── skills/                     # Dynamically generated Python tools & plugins
+│       ├── __init__.py
+│       └── template_skill.py
+│
+├── maintenance/
+│   ├── __init__.py
+│   └── model_updater.py            # Model discovery, Ollama pull API, audition tests
+│
+└── logs/
+    ├── trades.log
+    ├── system_errors.log
+    └── model_auditions.log
+
+================================================================================
+3. PHASE 1: LOCAL LLM ENGINE & CONTEXT EXPANSION (OLLAMA)
+================================================================================
+1. Install Ollama (https://ollama.com). Verify installation via terminal:
+   `ollama --version`
+
+2. By default, Ollama initializes models with a 4,096-token context window. This
+   is insufficient for ingest-heavy financial scraping and coding workflows.
+   Create a custom `Modelfile` to expand the context window to 32,768 (32K):
+
+   -----------------------------------------------------------------------------
+   # Modelfile
+   FROM qwen2.5-coder:32b
+   PARAMETER num_ctx 32768
+   PARAMETER temperature 0.2
+   PARAMETER stop "<|im_end|>"
+   -----------------------------------------------------------------------------
+   (Note: Use qwen2.5-coder:7b or 14b if hardware has less than 24GB unified RAM/VRAM).
+
+3. Build and test the custom model:
+   `ollama create agent-brain:32k -f Modelfile`
+   `ollama run agent-brain:32k "ping"`
+
+================================================================================
+4. PHASE 2: AUTONOMOUS SENSES & WEB SCRAPING (SEARXNG + CRAWL4AI)
+================================================================================
+1. Deploy SearXNG via Docker to prevent IP bans and rate-limiting from public search engines:
+   `docker run -d --name searxng -p 8080:8080 -v ./searxng:/etc/searxng searxng/searxng`
+
+2. Modify `searxng/settings.yml`:
+   Ensure `json` is included under `search.formats`:
+   -----------------------------------------------------------------------------
+   search:
+     formats:
+       - html
+       - json
+   -----------------------------------------------------------------------------
+   Restart the container: `docker restart searxng`
+
+3. Verify JSON output:
+   `curl "http://localhost:8080/search?q=forex+news&format=json"`
+
+4. Set up Crawl4AI in Python:
+   Crawl4AI handles modern JavaScript-heavy financial websites (Reuters, FXStreet, 
+   Bloomberg) and extracts structured Markdown while stripping away cookie notices,
+   scripts, and CSS styles.
+
+================================================================================
+5. PHASE 3: CLAUDE CHAT & RESEARCH REPLACEMENT (OPEN WEBUI)
+================================================================================
+To completely replace the paid Claude.ai web interface for daily queries, charts, 
+and document reading:
+
+1. Launch Open WebUI via Docker:
+   `docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui ghcr.io/open-webui/open-webui:main`
+
+2. Access `http://localhost:3000` and establish the primary administrator account.
+
+3. Configure Web Search with SearXNG:
+   - Go to: Admin Settings -> Web Search
+   - Enable Web Search: ON
+   - Web Search Engine: `searxng`
+   - SearXNG Query URL: `http://host.docker.internal:8080/search`
+
+4. Connect to Ollama:
+   - Ensure the Ollama base URL is set to `http://host.docker.internal:11434`.
+   - Select `agent-brain:32k` as the default model.
+   - Now, queries in the chat window trigger local web searches with live citations
+     without sending any proprietary data outside your local network.
+
+================================================================================
+6. PHASE 4: CLAUDE CODING REPLACEMENT (VS CODE + CLINE)
+================================================================================
+To replace Claude Opus for codebase development, debugging, and EA optimization:
+
+1. In VS Code, install the `Cline` extension.
+2. Open Cline Settings -> API Configuration:
+   - API Provider: `Ollama`
+   - Base URL: `http://localhost:11434`
+   - Model ID: `agent-brain:32k`
+   - Context Window: `32768`
+3. Troubleshooting Buffer:
+   If generating entire files exceeds local inference latency limits, switch 
+   API Provider to `OpenAI Compatible`, set the Base URL to 
+   `http://localhost:11434/v1`, and set Model to `agent-brain:32k`.
+4. Enable Auto-Approval for Read-Only operations, while keeping terminal commands
+   and write operations on "Require Approval" for safety.
+
+================================================================================
+7. PHASE 5: COMMUNICATION, ALERTS & HUMAN-IN-THE-LOOP (OPENCLAW)
+================================================================================
+OpenClaw serves as the agent harness, allowing your local Python engine to push 
+proposals, critical failures, and trade setups directly to your WhatsApp.
+
+1. Deploy OpenClaw locally and configure the WhatsApp Web gateway.
+2. Expose a local webhook endpoint inside `openclaw_bridge.py` on port 5055.
+3. Flow configuration:
+   - When a trade meets confidence criteria, `openclaw_bridge.py` formats a message:
+     "PROPOSAL: BUY EURUSD 0.05 lot | Confidence: 87% | Reason: ECB Hawkish news + H1 RSI oversold. Reply YES to execute or NO to abort."
+   - The loop awaits an incoming WhatsApp reply for up to 5 minutes before auto-aborting.
+   - If emergency errors occur (MT5 disconnect, zero liquidity), route immediate
+     alerts to WhatsApp and dispatch an alert email to `hello@syariefazman.com`.
+
+================================================================================
+8. PHASE 6: TRADING EXECUTION & DETERMINISTIC RISK WALL (METATRADER 5)
+================================================================================
+Build `core/mt5_engine.py` using the official `MetaTrader5` package.
+
+Key Operational Standards:
+1. Terminal Initialisation:
+   Must attach to the local terminal instance via `mt5.initialize()`.
+2. Technical Ingestion:
+   `get_technical_data(symbol, timeframe, bars=100)`:
+   - Pulls OHLC rates into a pandas DataFrame.
+   - Computes RSI(14), MACD(12, 26, 9), and ATR(14) using `pandas-ta`.
+   - Formats current indicators and high/low ranges into a clean dictionary.
+3. THE DETERMINISTIC RISK WALL:
+   Under no circumstances is the LLM allowed to execute trades directly or 
+   dictate raw position sizing without deterministic validation.
+   `execute_trade(symbol, action, suggested_lot, sl_points, tp_points)` must:
+   - Force-clamp `suggested_lot` against `config.json` boundaries:
+     `final_lot = min(suggested_lot, config["max_lot_size"])`
+   - Verify account free margin and calculate maximum acceptable currency loss.
+   - Reject the order if the Stop Loss exceeds the configured max drawdown percentage.
+   - Transmit order using `mt5.order_send()`.
+
+================================================================================
+9. PHASE 7: LIVE FUNDAMENTAL & TECHNICAL MULTI-AGENT ANALYSIS
+================================================================================
+1. `core/sentiment_engine.py`:
+   - Queries `http://localhost:8080/search?q={symbol}+forex+news&format=json`.
+   - Collects the top 3 relevant news URLs published within the last 12 hours.
+   - Dispatches Crawl4AI to fetch pages and render clean markdown snippets.
+   - Truncates news text to a maximum of 4,000 tokens to preserve reasoning context.
+
+2. `core/agent_logic.py`:
+   - System Prompt defines the AI as an institutional risk manager.
+   - Employs Pydantic to strictly parse and enforce output formats:
+   -----------------------------------------------------------------------------
+   from pydantic import BaseModel, Field
+   from typing import Literal
+
+   class TradeDecision(BaseModel):
+       market_sentiment: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+       technical_bias: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+       decision: Literal["BUY", "SELL", "WAIT"]
+       confidence_score: float = Field(ge=0.0, le=1.0)
+       stop_loss_pips: float
+       take_profit_pips: float
+       reasoning: str
+   -----------------------------------------------------------------------------
+   - If the LLM generates unparseable text or markdown fences, the script automatically
+     retries inference up to 3 times before raising a structured fallback alert.
+
+================================================================================
+10. PHASE 8: LOCAL LIFELONG LEARNING & TOOL CREATION (SKILLS, REFLEXION, MEM0)
+================================================================================
+The frozen neural weights are not retrained. Instead, continuous learning is 
+achieved via three external layers:
+
+Layer 1: Dynamic Skill Factory (`learning/skill_factory.py`)
+- When user or system requests an unfamiliar operation (e.g., "Parse economic calendar from ForexFactory"):
+  1. Agent searches SearXNG for the site structure or API documentation.
+  2. Crawl4AI retrieves code examples and documentation.
+  3. Agent writes a modular, standalone Python script inside `learning/skills/`.
+  4. Agent executes a dry-run test in a sandboxed subprocess.
+  5. Upon clean execution, the script is registered in the skill index for instant reuse.
+
+Layer 2: Reflexion & Error Accumulation (`learning/learned_rules.md`)
+- If a trade hits a Stop Loss or an execution script fails:
+  1. The agent performs a post-mortem: Was news ignored? Was spread too wide?
+  2. The lesson is distilled into an imperative rule:
+     "RULE #042: Never execute EURUSD positions 15 minutes before US CPI release."
+  3. `learned_rules.md` is appended.
+  4. The contents of `learned_rules.md` are automatically injected into every future 
+     system prompt prior to market analysis.
+
+Layer 3: Episodic Memory (`learning/memory_manager.py`)
+- Uses Mem0 backed by a local SQLite/Chroma instance.
+- Persists user preferences, specific broker conditions, and past trade outcomes.
+- Before formulating decisions, `agent_logic.py` queries Mem0 for high-similarity
+  historical episodes to verify if current conditions previously led to drawdown.
+
+================================================================================
+11. PHASE 9: AUTONOMOUS MODEL DISCOVERY, AUDITION & HOT-SWAP UPGRADE
+================================================================================
+Build `maintenance/model_updater.py` to upgrade the agent's core model autonomously
+without erasing its accumulated skills, rules, or memories:
+
+1. Periodic Scan:
+   Runs weekly via scheduler. Queries SearXNG to scrape the official Ollama library
+   and open-source releases for models matching criteria (e.g., architecture: coder,
+   parameter limit: <= 35B).
+
+2. Background Pull:
+   When a superior candidate is released (e.g., `qwen3-coder:32b`), the script calls:
+   `POST http://localhost:11434/api/pull` with `{"model": "qwen3-coder:32b"}`.
+   Ollama pulls the layers in the background without interrupting the active trading loop.
+
+3. The Audition Phase:
+   The newly downloaded candidate is run against a standardized test harness:
+   - Test 1: Synthesize complex MT5 tick data and news markdown.
+   - Test 2: Output strictly adhering to the `TradeDecision` Pydantic schema.
+   - Test 3: Solve a Python coding edge case.
+   If the candidate fails schema validation or exceeds response latency thresholds,
+   the candidate is discarded, and an audition log entry is recorded.
+
+4. Hot-Swap Handoff:
+   If the model passes audition:
+   - Updates `"active_model"` in `config.json`.
+   - Sends a WhatsApp message via OpenClaw:
+     "UPGRADE COMPLETE: Handed off reasoning to [New Model Name]. All skills, rules, and history preserved."
+
+================================================================================
+12. PHASE 10: MASTER ORCHESTRATION LOOP & CRASH RESILIENCE
+================================================================================
+`main.py` coordinates the complete operational cycle:
+
+1. Loop Frequency:
+   Monitors the MT5 terminal clock. Executes analysis exactly on the close of 
+   the H1 candle (or configured timeframe).
+
+2. Execution Sequence:
+   a. Check `learned_rules.md` and load recent constraints.
+   b. Call `mt5_engine.get_technical_data("EURUSD", TIMEFRAME_H1)`.
+   c. Call `sentiment_engine.get_live_news("EURUSD")`.
+   d. Query Mem0 for similar historical market conditions.
+   e. Send combined payload to active local Ollama model.
+   f. Validate response with Pydantic `TradeDecision`.
+   g. If `decision != WAIT` and `confidence_score >= 0.80`:
+      - Dispatch WhatsApp prompt via OpenClaw for human approval.
+      - Upon affirmative reply, enforce Deterministic Risk Wall.
+      - Place order via `mt5_engine.execute_trade()`.
+   h. If trade is closed at a loss, trigger Reflexion update to `learned_rules.md`.
+
+3. Crash Resilience & Logging:
+   - The loop runs inside a global `try...except` envelope.
+   - Unhandled runtime exceptions trigger immediate emergency notifications to
+     `hello@syariefazman.com` and log to `logs/system_errors.log`.
+   - Automatic terminal reconnection routines ensure temporary MT5 dropouts do not
+     terminate the background script.
+
+================================================================================
+13. SECURITY DIRECTIVES & HARDCODED CONSTRAINTS
+================================================================================
+1. ZERO REMOTE DEPENDENCY:
+   All inference, search scraping, execution logic, and vector embeddings must 
+   bind to localhost (`127.0.0.1` / `host.docker.internal`). No outbound API 
+   calls to proprietary LLM providers are permitted.
+
+2. DETERMINISTIC RISK ENFORCEMENT:
+   Under no condition should the language model have direct access to broker 
+   credentials or raw execution control. The Python risk management module sits 
+   between the model and MT5 as an immutable gatekeeper.
+
+3. REVERSIBLE STATE:
+   Every skill created by `skill_factory.py` must be sandboxed and validated 
+   before runtime inclusion. No dynamic script may modify core system files 
+   (`main.py`, `mt5_engine.py`, `config.json`).
+================================================================================

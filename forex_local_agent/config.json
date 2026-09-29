@@ -1,0 +1,43 @@
+{
+  "active_model": "agent-brain:32k",
+  "ollama_base_url": "http://localhost:11434",
+  "searxng_url": "http://localhost:8080",
+  "open_webui_url": "http://localhost:3000",
+  "openclaw_webhook_port": 5055,
+  "mt5_credentials": {
+    "login": 25360772,
+    "password": "",
+    "server": "Tickmill-Demo",
+    "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+  },
+  "risk_parameters": {
+    "max_lot_size": 0.1,
+    "max_drawdown_pct": 2.0,
+    "max_open_trades": 3,
+    "confidence_threshold": 0.80,
+    "approval_timeout_seconds": 300
+  },
+  "trading": {
+    "symbols": [
+      "EURUSD"
+    ],
+    "timeframe": "H1",
+    "analysis_bars": 100,
+    "max_news_tokens": 4000
+  },
+  "model_upgrade": {
+    "scan_interval_days": 7,
+    "max_parameter_size_b": 35,
+    "architecture_filter": "coder",
+    "max_response_latency_seconds": 60
+  },
+  "alerts": {
+    "admin_email": "hello@syariefazman.com",
+    "whatsapp_enabled": true
+  },
+  "memory": {
+    "backend": "chromadb",
+    "collection_name": "forex_episodes",
+    "similarity_top_k": 5
+  }
+}
