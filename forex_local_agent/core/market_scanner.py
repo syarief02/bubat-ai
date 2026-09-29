@@ -20,34 +20,37 @@ except ImportError:
     from forex_local_agent.core.web_surfer import WebSurfer
 
 DEFAULT_SYMBOLS = [
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
-    "NZDUSD", "EURJPY", "GBPJPY", "XAUUSD"
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF",
+    "AUDUSD", "NZDUSD", "USDCAD", "XAUUSD"
 ]
 
 class MarketScanner:
     """Scans and ranks live Forex pairs via MetaTrader 5."""
 
     def __init__(self, symbols: Optional[List[str]] = None):
-        self.symbols = symbols or DEFAULT_SYMBOLS
-        self.surfer = WebSurfer()
-        self.tf_map = {
-            "M1": mt5.TIMEFRAME_M1,
-            "M5": mt5.TIMEFRAME_M5,
-            "M15": mt5.TIMEFRAME_M15,
-            "M30": mt5.TIMEFRAME_M30,
-            "H1": mt5.TIMEFRAME_H1,
-            "H4": mt5.TIMEFRAME_H4,
-            "D1": mt5.TIMEFRAME_D1,
-        }
+        if symbols:
+            self.symbols = symbols
+        else:
+            config_file = Path(__file__).resolve().parent.parent / "config.json"
+            if config_file.exists():
+                try:
+                    with open(config_file, "r") as f:
+                        cfg = json.load(f)
+                    self.symbols = cfg.get("trading", {}).get("symbols", DEFAULT_SYMBOLS)
+                except Exception:
+                    self.symbols = DEFAULT_SYMBOLS
+            else:
+                self.symbols = DEFAULT_SYMBOLS
 
-    def scan_and_rank(self, timeframe: str = "H1") -> Dict[str, Any]:
+        self.surfer = WebSurfer()
+
+    def scan_and_rank(self) -> Dict[str, Any]:
         """
         Scan all pairs, compute technical metrics, evaluate session context,
-        and rank them from best opportunity to lowest for the given timeframe.
+        and rank them from best opportunity to lowest.
         """
         session_info = self.surfer.get_current_market_session()
         recommended_pairs = session_info.get("best_pairs_for_session", [])
-        mt5_tf = self.tf_map.get(timeframe.upper(), mt5.TIMEFRAME_H1)
 
         if not mt5.initialize():
             logger.error("MarketScanner: Could not initialize MetaTrader 5.")
@@ -67,8 +70,8 @@ class MarketScanner:
                 if not tick:
                     continue
 
-                # Copy 50 candles for the chosen timeframe
-                rates = mt5.copy_rates_from_pos(sym, mt5_tf, 0, 50)
+                # Copy 50 H1 candles for indicator calculation
+                rates = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_H1, 0, 50)
                 if rates is None or len(rates) < 25:
                     continue
 
@@ -149,7 +152,6 @@ class MarketScanner:
 
         return {
             "status": "success",
-            "timeframe": timeframe.upper(),
             "session": session_info,
             "total_pairs_scanned": len(ranked_list),
             "rankings": ranked_list
@@ -160,12 +162,11 @@ class MarketScanner:
         if scan_result.get("status") != "success":
             return f"Market scan failed: {scan_result.get('message', 'Unknown error')}"
 
-        tf = scan_result.get("timeframe", "H1")
         session = scan_result.get("session", {})
         rankings = scan_result.get("rankings", [])
 
         lines = [
-            f"=== LIVE FOREX MARKET SESSION SCAN ({tf}) ===",
+            f"=== LIVE FOREX MARKET SESSION SCAN ===",
             f"UTC Time: {session.get('utc_time')}",
             f"Active Session: {session.get('session_summary')}",
             f"Pairs Evaluated: {scan_result.get('total_pairs_scanned')}",

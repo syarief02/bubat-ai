@@ -19,7 +19,14 @@
   },
   "trading": {
     "symbols": [
-      "EURUSD"
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "USDCHF",
+      "AUDUSD",
+      "NZDUSD",
+      "USDCAD",
+      "XAUUSD"
     ],
     "timeframe": "H1",
     "analysis_bars": 100,
