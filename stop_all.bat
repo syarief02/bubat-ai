@@ -7,17 +7,20 @@ echo             BUBAT AI — STOPPING ALL SERVICES & SERVERS
 echo ====================================================================
 echo.
 
-:: 1. Terminate any running python agents
-echo [*] Terminating Python agent processes...
-taskkill /F /FI "WINDOWTITLE eq Bubat AI*" /T >nul 2>&1
-wmic process where "commandline like '%%forex_local_agent%%'" call terminate >nul 2>&1
+:: 1. Terminate Ollama server and app
+echo [*] Stopping Ollama server...
+taskkill /F /T /IM ollama.exe 2>nul
+taskkill /F /T /IM "ollama app.exe" 2>nul
+powershell -Command "Stop-Process -Name ollama, 'ollama app' -Force -ErrorAction SilentlyContinue"
 
-:: 2. Terminate Ollama server
-echo [*] Terminating Ollama server (ollama.exe)...
-taskkill /F /IM ollama.exe >nul 2>&1
-taskkill /F /IM "ollama app.exe" >nul 2>&1
+:: 2. Terminate Python agent processes
+echo [*] Stopping Python trading agents...
+taskkill /F /FI "WINDOWTITLE eq Bubat AI*" /T 2>nul
+powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'main.py|chat.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 
 echo.
-echo [OK] All Bubat AI services and background Ollama servers have stopped.
+echo ====================================================================
+echo [OK] All Bubat AI tasks, Python loops, and Ollama servers are OFF.
+echo ====================================================================
 echo.
-pause
+timeout /t 3
