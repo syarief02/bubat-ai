@@ -52,7 +52,8 @@
     ],
     "timeframe": "M5",
     "analysis_bars": 100,
-    "max_news_tokens": 4000
+    "max_news_tokens": 4000,
+    "order_comment": "Bubat AI"
   },
   "model_upgrade": {
     "scan_interval_days": 7,

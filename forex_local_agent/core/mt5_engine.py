@@ -52,6 +52,7 @@ class MT5Engine:
         trading = self.config.get("trading", {})
         self.default_timeframe = trading.get("timeframe", "H1")
         self.analysis_bars = trading.get("analysis_bars", 100)
+        self.order_comment = trading.get("order_comment", "Bubat AI")
 
     def initialize(self) -> bool:
         creds = self.config.get("mt5_credentials", {})
@@ -379,7 +380,7 @@ class MT5Engine:
             "tp": tp,
             "deviation": 20,
             "magic": 234000,
-            "comment": "forex_local_agent",
+            "comment": self.order_comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
