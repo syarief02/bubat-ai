@@ -347,3 +347,4 @@ class MT5Engine:
         if deals is None:
             return []
         return [d._asdict() for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
+
