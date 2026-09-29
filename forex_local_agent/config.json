@@ -28,7 +28,7 @@
       "USDCAD",
       "XAUUSD"
     ],
-    "timeframe": "H1",
+    "timeframe": "M5",
     "analysis_bars": 100,
     "max_news_tokens": 4000
   },
