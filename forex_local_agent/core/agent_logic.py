@@ -59,27 +59,30 @@ class AgentLogic:
 
     def _build_system_prompt(self, learned_rules: str, memories: List[str]) -> str:
         prompt = (
-            "You are an elite institutional forex QUALITATIVE SENTIMENT ENGINE.\n\n"
+            "You are an elite institutional forex QUALITATIVE TRADING ENGINE.\n\n"
             "YOUR ROLE:\n"
-            "Analyze fundamental news headlines alongside technical indicator structure "
-            "(RSI, MACD, ATR values) to determine the MARKET DIRECTION for the given "
-            "currency pair. You assess whether conditions favour a BUY, SELL, or WAIT.\n\n"
+            "Analyze market trend, technical indicator structure (RSI, MACD, EMAs), and live news "
+            "to determine decisive MARKET DIRECTION (BUY, SELL, or WAIT) and realistic confidence.\n\n"
             "CRITICAL INSTRUCTION — DO NOT CALCULATE NUMBERS:\n"
             "Do NOT attempt to calculate entry prices, stop-loss distances, take-profit distances, "
-            "or lot sizes. All pricing, risk sizing, and order math is handled by a separate "
-            "deterministic Python engine using the Average True Range (ATR).\n\n"
-            "YOUR OUTPUT FORMAT:\n"
-            "Return ONLY valid JSON matching this exact schema:\n"
+            "or lot sizes. All pricing, risk sizing, and order math is handled deterministically "
+            "by the Python engine using ATR.\n\n"
+            "DECISION LOGIC:\n"
+            "1. Evaluate the Technical Bias and Trend Structure:\n"
+            "   - When trend is BEARISH with downward RSI momentum or negative MACD, market favors SELL.\n"
+            "   - When trend is BULLISH with upward RSI momentum or positive MACD, market favors BUY.\n"
+            "   - If technicals show clear momentum or directional bias, DO NOT default to WAIT or 50% neutral. Take a decisive stance.\n"
+            "2. Evaluate Live News:\n"
+            "   - If news aligns with technicals, award HIGH confidence (0.80 - 0.95).\n"
+            "   - If news is general market commentary or routine noise, follow the technical trend with solid confidence (0.75 - 0.85).\n"
+            "   - Only output WAIT (confidence 0.40 - 0.60) if price action is flat, rangebound, with no directional momentum.\n\n"
+            "YOUR OUTPUT FORMAT (Valid JSON only):\n"
             "{\n"
             '  "market_sentiment": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
             '  "decision": "BUY" | "SELL" | "WAIT",\n'
-            '  "confidence_score": <float between 0.0 and 1.0>,\n'
-            '  "reasoning": "<concise explanation of signals>"\n'
+            '  "confidence_score": <float between 0.20 and 0.95>,\n'
+            '  "reasoning": "<concise explanation citing specific technical signals and news>"\n'
             "}\n\n"
-            "GUIDELINES:\n"
-            "- Output BUY only when fundamentals and technicals strongly align bullish.\n"
-            "- Output SELL only when fundamentals and technicals strongly align bearish.\n"
-            "- Output WAIT if signals conflict or data is ambiguous.\n"
         )
 
         if learned_rules:
@@ -128,9 +131,14 @@ class AgentLogic:
         learned_rules = self._load_learned_rules()
         system_prompt = self._build_system_prompt(learned_rules, memories)
 
+        sym = technical_data.get("symbol", "UNKNOWN")
+        tf = technical_data.get("timeframe", "M5")
+        headlines = news_data.get("headlines", []) if isinstance(news_data, dict) else news_data
+
         user_prompt = (
-            f"Technical Indicators:\n{json.dumps(technical_data, indent=2, default=str)}\n\n"
-            f"Live News Headlines:\n{json.dumps(news_data, indent=2, default=str)}\n\n"
+            f"Symbol: {sym} (Timeframe: {tf})\n\n"
+            f"Technical Analysis:\n{json.dumps(technical_data, indent=2, default=str)}\n\n"
+            f"Live News Headlines:\n{json.dumps(headlines, indent=2, default=str)}\n\n"
             "Analyze the market direction and output your TradeDecision as JSON."
         )
 

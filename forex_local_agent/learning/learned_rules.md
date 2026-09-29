@@ -9,6 +9,6 @@
 - **Directive**: Use natural conversational Malaysian Malay ('bercakap', santai, mesra) when speaking Malay. Do NOT use formal Indonesian ('berbicara').
 
 ### [STRATEGY] Rule #1790694423
-- **Date**: 2026-09-29 15:07:03 UTC
+- **Date**: 2026-09-30 01:15:00 UTC
 - **Source**: user_instruction
-- **Directive**: I prefer trading EURUSD and USDJPY only
+- **Directive**: Analyze and trade across all 28 Forex pairs and XAUUSD. Prioritize pairs with strong trend momentum, clear EMA alignment, and favorable session liquidity.

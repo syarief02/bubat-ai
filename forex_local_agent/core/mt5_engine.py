@@ -128,18 +128,75 @@ class MT5Engine:
         df.ta.rsi(length=14, append=True)
         df.ta.macd(fast=12, slow=26, signal=9, append=True)
         df.ta.atr(length=self.atr_period, append=True)
+        df.ta.ema(length=20, append=True)
+        df.ta.ema(length=50, append=True)
 
         last_row = df.iloc[-1]
+        close_price = float(last_row["close"])
 
         macd_cols = [c for c in df.columns if c.startswith("MACD_")]
         macdh_cols = [c for c in df.columns if c.startswith("MACDh_")]
         macds_cols = [c for c in df.columns if c.startswith("MACDs_")]
         rsi_col = [c for c in df.columns if c.startswith("RSI_")]
         atr_col = [c for c in df.columns if c.startswith("ATRr_")]
+        ema_20_col = [c for c in df.columns if c.startswith("EMA_20")]
+        ema_50_col = [c for c in df.columns if c.startswith("EMA_50")]
 
         # Safe float conversion
         def to_float(val):
             return float(val) if val is not None and not pd.isna(val) else None
+
+        ema_20_val = to_float(last_row[ema_20_col[0]]) if ema_20_col else None
+        ema_50_val = to_float(last_row[ema_50_col[0]]) if ema_50_col else None
+        rsi_val = to_float(last_row[rsi_col[0]]) if rsi_col else None
+        macd_val = to_float(last_row[macd_cols[0]]) if macd_cols else None
+        macds_val = to_float(last_row[macds_cols[0]]) if macds_cols else None
+        macdh_val = to_float(last_row[macdh_cols[0]]) if macdh_cols else None
+
+        # 24h change % reference
+        open_price_ref = float(df.iloc[0]["open"])
+        change_pct = round(((close_price - open_price_ref) / open_price_ref) * 100, 2)
+
+        # Structure analysis
+        if ema_20_val and ema_50_val:
+            if close_price > ema_20_val and ema_20_val > ema_50_val:
+                trend_structure = "STRONG BULLISH (Uptrend above 20 & 50 EMA)"
+                bias = "STRONG BULLISH"
+            elif close_price < ema_20_val and ema_20_val < ema_50_val:
+                trend_structure = "STRONG BEARISH (Downtrend below 20 & 50 EMA)"
+                bias = "STRONG BEARISH"
+            elif close_price > ema_20_val:
+                trend_structure = "BULLISH BIAS (Above 20 EMA)"
+                bias = "BULLISH"
+            elif close_price < ema_20_val:
+                trend_structure = "BEARISH BIAS (Below 20 EMA)"
+                bias = "BEARISH"
+            else:
+                trend_structure = "NEUTRAL (Consolidating around EMAs)"
+                bias = "NEUTRAL"
+        else:
+            trend_structure = "RANGING"
+            bias = "NEUTRAL"
+
+        if rsi_val is not None:
+            if rsi_val <= 35:
+                rsi_condition = f"OVERSOLD / STRONG DOWNSIDE MOMENTUM (RSI = {rsi_val:.1f})"
+            elif rsi_val >= 65:
+                rsi_condition = f"OVERBOUGHT / STRONG UPSIDE MOMENTUM (RSI = {rsi_val:.1f})"
+            elif rsi_val < 50:
+                rsi_condition = f"BEARISH PRESSURE (RSI = {rsi_val:.1f})"
+            else:
+                rsi_condition = f"BULLISH PRESSURE (RSI = {rsi_val:.1f})"
+        else:
+            rsi_condition = "N/A"
+
+        if macd_val is not None and macds_val is not None:
+            if macd_val > macds_val:
+                macd_condition = "BULLISH (MACD line above signal line)"
+            else:
+                macd_condition = "BEARISH (MACD line below signal line)"
+        else:
+            macd_condition = "N/A"
 
         last_5 = df.tail(5)[["time", "open", "high", "low", "close"]].to_dict(orient="records")
         for record in last_5:
@@ -151,12 +208,17 @@ class MT5Engine:
         return {
             "symbol": symbol,
             "timeframe": timeframe,
-            "current_price": float(last_row["close"]),
-            "rsi": to_float(last_row[rsi_col[0]]) if rsi_col else None,
-            "macd": to_float(last_row[macd_cols[0]]) if macd_cols else None,
-            "macd_signal": to_float(last_row[macds_cols[0]]) if macds_cols else None,
-            "macd_hist": to_float(last_row[macdh_cols[0]]) if macdh_cols else None,
+            "current_price": close_price,
+            "trend_structure": trend_structure,
+            "technical_bias": bias,
+            "rsi": round(rsi_val, 1) if rsi_val is not None else None,
+            "rsi_condition": rsi_condition,
+            "macd": round(macd_val, 6) if macd_val is not None else None,
+            "macd_signal": round(macds_val, 6) if macds_val is not None else None,
+            "macd_hist": round(macdh_val, 6) if macdh_val is not None else None,
+            "macd_condition": macd_condition,
             "atr": to_float(last_row[atr_col[0]]) if atr_col else None,
+            "change_pct": change_pct,
             "high_range": float(df["high"].max()),
             "low_range": float(df["low"].min()),
             "last_5_candles": last_5,
