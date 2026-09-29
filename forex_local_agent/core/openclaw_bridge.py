@@ -39,8 +39,22 @@ class OpenClawBridge:
         lot = proposal.get("lot", 0.0)
         confidence = proposal.get("confidence", 0)
         reasoning = proposal.get("reasoning", "No reason provided")
-        
-        return f"PROPOSAL: {action} {symbol} {lot} lot | Confidence: {confidence}% | Reason: {reasoning}. Reply YES to execute or NO to abort."
+        entry = proposal.get("entry", "N/A")
+        sl = proposal.get("sl", "N/A")
+        tp = proposal.get("tp", "N/A")
+        atr = proposal.get("atr", "N/A")
+        risk_amount = proposal.get("risk_amount", "N/A")
+        risk_reward = proposal.get("risk_reward", "N/A")
+
+        return (
+            f"PROPOSAL: {action} {symbol}\n"
+            f"Lot: {lot} | Entry: {entry}\n"
+            f"SL: {sl} | TP: {tp}\n"
+            f"ATR: {atr} | R:R 1:{risk_reward}\n"
+            f"Risk: ${risk_amount} | Confidence: {confidence}%\n"
+            f"Reason: {reasoning}\n"
+            f"Reply YES to execute or NO to abort."
+        )
 
     async def send_trade_proposal(self, proposal: Dict) -> bool:
         message = self._format_trade_message(proposal)

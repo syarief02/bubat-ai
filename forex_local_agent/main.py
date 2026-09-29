@@ -121,8 +121,8 @@ class ForexAgent:
             )
             memory_strings = self.memory._format_episode_for_prompt(similar_episodes)
 
-            # e+f. Send to Ollama and validate with Pydantic
-            logger.info(f"[{symbol}] Requesting trade decision from LLM...")
+            # e+f. Send to Ollama and validate with Pydantic (Qualitative only)
+            logger.info(f"[{symbol}] Requesting qualitative decision from LLM...")
             decision: TradeDecision = await self.agent_logic.get_trade_decision(
                 technical_data=tech_data,
                 news_data=news_data,
@@ -131,46 +131,59 @@ class ForexAgent:
             logger.info(
                 f"[{symbol}] Decision: {decision.decision} | "
                 f"Confidence: {decision.confidence_score:.0%} | "
-                f"Sentiment: {decision.market_sentiment} | "
-                f"Technical: {decision.technical_bias}"
+                f"Sentiment: {decision.market_sentiment}"
             )
 
-            # g. Execute if conditions met
+            # g. If actionable signal, calculate deterministic trade parameters & propose
             if decision.decision != "WAIT" and decision.confidence_score >= self.confidence_threshold:
-                logger.info(f"[{symbol}] Trade signal meets threshold, requesting human approval...")
+                logger.info(f"[{symbol}] Signal meets threshold. Calculating deterministic trade parameters...")
 
-                # Format proposal for WhatsApp
-                proposal = {
-                    "action": decision.decision,
-                    "symbol": symbol,
-                    "lot": self.config.get("risk_parameters", {}).get("max_lot_size", 0.1),
-                    "confidence": int(decision.confidence_score * 100),
-                    "reasoning": decision.reasoning,
-                    "sl_pips": decision.stop_loss_pips,
-                    "tp_pips": decision.take_profit_pips,
-                }
-                await self.openclaw.send_trade_proposal(proposal)
+                trade_params = self.mt5_engine.calculate_trade_parameters(
+                    symbol=symbol,
+                    decision=decision.decision
+                )
 
-                # Wait for approval
-                approved = await self.openclaw.wait_for_approval(timeout_seconds=self.approval_timeout)
-
-                if approved:
-                    logger.info(f"[{symbol}] Trade APPROVED — enforcing risk wall...")
-                    result = self.mt5_engine.execute_trade(
-                        symbol=symbol,
-                        action=decision.decision,
-                        suggested_lot=proposal["lot"],
-                        sl_points=decision.stop_loss_pips * 10,  # Convert pips to points
-                        tp_points=decision.take_profit_pips * 10,
+                if trade_params.get("status") == "error":
+                    logger.error(f"[{symbol}] Parameter calculation error: {trade_params.get('message')}")
+                    await self.openclaw.send_alert(
+                        f"Parameter calculation failed for {symbol}: {trade_params.get('message')}", level="WARNING"
                     )
-                    logger.bind(trade=True).info(f"[{symbol}] Trade result: {json.dumps(result)}")
-
-                    if result.get("status") == "rejected":
-                        await self.openclaw.send_alert(
-                            f"RISK WALL REJECTED trade on {symbol}: {result.get('message')}", level="WARNING"
-                        )
                 else:
-                    logger.info(f"[{symbol}] Trade NOT approved (rejected or timed out).")
+                    # Format proposal for WhatsApp with exact numbers
+                    proposal = {
+                        "action": trade_params["action"],
+                        "symbol": symbol,
+                        "lot": trade_params["lot"],
+                        "entry": trade_params["entry"],
+                        "sl": trade_params["sl"],
+                        "tp": trade_params["tp"],
+                        "atr": trade_params["atr"],
+                        "risk_amount": trade_params["risk_amount"],
+                        "risk_reward": trade_params["risk_reward_ratio"],
+                        "confidence": int(decision.confidence_score * 100),
+                        "reasoning": decision.reasoning,
+                    }
+                    await self.openclaw.send_trade_proposal(proposal)
+
+                    # Wait for human approval
+                    approved = await self.openclaw.wait_for_approval(timeout_seconds=self.approval_timeout)
+
+                    if approved:
+                        logger.info(f"[{symbol}] Trade APPROVED — executing through risk wall...")
+                        result = self.mt5_engine.execute_trade(trade_params)
+                        logger.bind(trade=True).info(f"[{symbol}] Trade result: {json.dumps(result)}")
+
+                        if result.get("status") == "rejected":
+                            await self.openclaw.send_alert(
+                                f"RISK WALL REJECTED trade on {symbol}: {result.get('message')}", level="WARNING"
+                            )
+                        elif result.get("status") == "success":
+                            await self.openclaw.send_alert(
+                                f"EXECUTED {trade_params['action']} {symbol} | Ticket: {result.get('ticket')} | Lot: {result.get('lot')}",
+                                level="INFO"
+                            )
+                    else:
+                        logger.info(f"[{symbol}] Trade NOT approved (rejected or timed out).")
             else:
                 logger.info(f"[{symbol}] Decision is WAIT or confidence below threshold. No action.")
 
@@ -184,7 +197,6 @@ class ForexAgent:
             }
             await self.memory.store_episode(episode)
 
-            # i. Return the decision
             return decision
 
         except Exception as e:

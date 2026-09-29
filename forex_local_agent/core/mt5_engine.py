@@ -1,33 +1,57 @@
+"""
+MT5 Engine — Deterministic Math Calculator & Trade Executor
+=============================================================
+Separates Qualitative Reasoning (LLM) from Quantitative Math (Python).
+The LLM evaluates market sentiment and outputs BUY/SELL/WAIT.
+This engine calculates exact Entry, SL, TP, and Lot Size using ATR and account balance.
+"""
+
 import MetaTrader5 as mt5
 import pandas as pd
 import pandas_ta as ta
 import json
-import logging
+import math
 import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from loguru import logger
 
+
 class MT5Engine:
     def __init__(self, config_path: str):
         self.config_path = Path(config_path)
-        with open(self.config_path, 'r') as f:
+        with open(self.config_path, "r") as f:
             self.config = json.load(f)
-            
-        log_dir = self.config_path.parent / 'logs'
+
+        log_dir = self.config_path.parent / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        logger.add(log_dir / 'trades.log', rotation="10 MB")
-        
+        logger.add(log_dir / "trades.log", rotation="10 MB")
+
         self.tf_map = {
-            'M1': mt5.TIMEFRAME_M1,
-            'M5': mt5.TIMEFRAME_M5,
-            'M15': mt5.TIMEFRAME_M15,
-            'M30': mt5.TIMEFRAME_M30,
-            'H1': mt5.TIMEFRAME_H1,
-            'H4': mt5.TIMEFRAME_H4,
-            'D1': mt5.TIMEFRAME_D1,
+            "M1": mt5.TIMEFRAME_M1,
+            "M5": mt5.TIMEFRAME_M5,
+            "M15": mt5.TIMEFRAME_M15,
+            "M30": mt5.TIMEFRAME_M30,
+            "H1": mt5.TIMEFRAME_H1,
+            "H4": mt5.TIMEFRAME_H4,
+            "D1": mt5.TIMEFRAME_D1,
         }
+
+        # Risk parameters
+        risk = self.config.get("risk_parameters", {})
+        self.max_lot_size = risk.get("max_lot_size", 0.1)
+        self.max_drawdown_pct = risk.get("max_drawdown_pct", 2.0)
+        self.max_open_trades = risk.get("max_open_trades", 3)
+        self.risk_per_trade_pct = risk.get("risk_per_trade_pct", 1.5)
+        self.atr_period = risk.get("atr_period", 14)
+        self.atr_multiplier_sl = risk.get("atr_multiplier_sl", 1.5)
+        self.atr_multiplier_tp = risk.get("atr_multiplier_tp", 3.0)
+
+        # Trading settings
+        trading = self.config.get("trading", {})
+        self.default_timeframe = trading.get("timeframe", "H1")
+        self.analysis_bars = trading.get("analysis_bars", 100)
 
     def initialize(self) -> bool:
         creds = self.config.get("mt5_credentials", {})
@@ -67,123 +91,241 @@ class MT5Engine:
         mt5.shutdown()
         logger.info("MT5 shutdown")
 
+    def reconnect(self) -> bool:
+        for attempt in range(3):
+            logger.info(f"Reconnection attempt {attempt + 1}")
+            self.shutdown()
+            time.sleep(5)
+            if self.initialize():
+                return True
+        logger.error("Failed to reconnect after 3 attempts")
+        return False
+
     def get_account_info(self) -> Dict:
         account_info = mt5.account_info()
         if account_info is None:
             logger.error("Failed to get account info")
             return {}
         return {
-            'balance': account_info.balance,
-            'equity': account_info.equity,
-            'margin': account_info.margin,
-            'free_margin': account_info.margin_free
+            "balance": float(account_info.balance),
+            "equity": float(account_info.equity),
+            "margin": float(account_info.margin),
+            "free_margin": float(account_info.margin_free),
         }
 
-    def get_technical_data(self, symbol: str, timeframe: str = 'H1', bars: int = 100) -> Dict:
+    def get_technical_data(self, symbol: str, timeframe: str = "H1", bars: int = 100) -> Dict:
         tf = self.tf_map.get(timeframe, mt5.TIMEFRAME_H1)
         rates = mt5.copy_rates_from_pos(symbol, tf, 0, bars)
         if rates is None:
             logger.error(f"Failed to get rates for {symbol}")
             return {}
-        
+
         df = pd.DataFrame(rates)
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        
+        # Format time to ISO string to guarantee JSON serializability
+        df["time"] = pd.to_datetime(df["time"], unit="s").dt.strftime("%Y-%m-%d %H:%M:%S")
+
         df.ta.rsi(length=14, append=True)
         df.ta.macd(fast=12, slow=26, signal=9, append=True)
-        df.ta.atr(length=14, append=True)
-        
+        df.ta.atr(length=self.atr_period, append=True)
+
         last_row = df.iloc[-1]
-        
-        macd_cols = [c for c in df.columns if c.startswith('MACD_')]
-        macdh_cols = [c for c in df.columns if c.startswith('MACDh_')]
-        macds_cols = [c for c in df.columns if c.startswith('MACDs_')]
-        rsi_col = [c for c in df.columns if c.startswith('RSI_')]
-        atr_col = [c for c in df.columns if c.startswith('ATRr_')]
+
+        macd_cols = [c for c in df.columns if c.startswith("MACD_")]
+        macdh_cols = [c for c in df.columns if c.startswith("MACDh_")]
+        macds_cols = [c for c in df.columns if c.startswith("MACDs_")]
+        rsi_col = [c for c in df.columns if c.startswith("RSI_")]
+        atr_col = [c for c in df.columns if c.startswith("ATRr_")]
+
+        # Safe float conversion
+        def to_float(val):
+            return float(val) if val is not None and not pd.isna(val) else None
+
+        last_5 = df.tail(5)[["time", "open", "high", "low", "close"]].to_dict(orient="records")
+        for record in last_5:
+            record["open"] = float(record["open"])
+            record["high"] = float(record["high"])
+            record["low"] = float(record["low"])
+            record["close"] = float(record["close"])
 
         return {
-            'symbol': symbol,
-            'timeframe': timeframe,
-            'current_price': last_row['close'],
-            'rsi': last_row[rsi_col[0]] if rsi_col else None,
-            'macd': last_row[macd_cols[0]] if macd_cols else None,
-            'macd_signal': last_row[macds_cols[0]] if macds_cols else None,
-            'macd_hist': last_row[macdh_cols[0]] if macdh_cols else None,
-            'atr': last_row[atr_col[0]] if atr_col else None,
-            'high_range': df['high'].max(),
-            'low_range': df['low'].min(),
-            'last_5_candles': df.tail(5)[['time', 'open', 'high', 'low', 'close']].to_dict(orient='records')
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "current_price": float(last_row["close"]),
+            "rsi": to_float(last_row[rsi_col[0]]) if rsi_col else None,
+            "macd": to_float(last_row[macd_cols[0]]) if macd_cols else None,
+            "macd_signal": to_float(last_row[macds_cols[0]]) if macds_cols else None,
+            "macd_hist": to_float(last_row[macdh_cols[0]]) if macdh_cols else None,
+            "atr": to_float(last_row[atr_col[0]]) if atr_col else None,
+            "high_range": float(df["high"].max()),
+            "low_range": float(df["low"].min()),
+            "last_5_candles": last_5,
         }
 
-    def execute_trade(self, symbol: str, action: str, suggested_lot: float, sl_points: float, tp_points: float) -> Dict:
-        logger.info(f"Trade requested: {action} {symbol} lot={suggested_lot} sl={sl_points} tp={tp_points}")
-        
-        max_lot = self.config.get('risk_parameters', {}).get('max_lot_size', 0.1)
-        final_lot = min(suggested_lot, max_lot)
-        
-        account_info = self.get_account_info()
-        if not account_info:
-            return {"status": "error", "message": "Could not get account info"}
-            
-        balance = account_info.get('balance', 0)
-        
-        max_open = self.config.get('risk_parameters', {}).get('max_open_trades', 5)
-        open_positions = self.get_open_positions()
-        if len(open_positions) >= max_open:
-            msg = f"REJECTED: Max open trades ({max_open}) reached"
-            logger.warning(msg)
-            return {"status": "rejected", "message": msg}
-            
+    def calculate_trade_parameters(self, symbol: str, decision: str) -> Dict:
+        """
+        Deterministically calculate Entry, SL, TP, and Lot Size using ATR and account data.
+        """
+        logger.info(f"[MATH ENGINE] Calculating trade parameters for {decision} {symbol}")
+
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
-            return {"status": "error", "message": f"Symbol {symbol} not found"}
-            
+            return {"status": "error", "message": f"Symbol {symbol} not found in MT5"}
+
         if not symbol_info.visible:
             if not mt5.symbol_select(symbol, True):
-                return {"status": "error", "message": f"Failed to select {symbol}"}
-                
+                return {"status": "error", "message": f"Failed to select symbol {symbol}"}
+
+        tech_data = self.get_technical_data(symbol, self.default_timeframe, self.analysis_bars)
+        atr_value = tech_data.get("atr")
+        if atr_value is None or atr_value <= 0:
+            return {"status": "error", "message": f"Invalid ATR value: {atr_value}"}
+
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return {"status": "error", "message": f"Could not get tick for {symbol}"}
+
         point = symbol_info.point
-        price = mt5.symbol_info_tick(symbol).ask if action.lower() == 'buy' else mt5.symbol_info_tick(symbol).bid
-        
-        if action.lower() == 'buy':
-            sl = price - (sl_points * point)
-            tp = price + (tp_points * point)
+        digits = symbol_info.digits
+
+        sl_distance = atr_value * self.atr_multiplier_sl
+        tp_distance = atr_value * self.atr_multiplier_tp
+
+        if decision.upper() == "BUY":
+            entry_price = float(tick.ask)
+            sl_price = round(entry_price - sl_distance, digits)
+            tp_price = round(entry_price + tp_distance, digits)
             order_type = mt5.ORDER_TYPE_BUY
-        else:
-            sl = price + (sl_points * point)
-            tp = price - (tp_points * point)
+        elif decision.upper() == "SELL":
+            entry_price = float(tick.bid)
+            sl_price = round(entry_price + sl_distance, digits)
+            tp_price = round(entry_price - tp_distance, digits)
             order_type = mt5.ORDER_TYPE_SELL
-            
+        else:
+            return {"status": "error", "message": f"Invalid decision: {decision}"}
+
+        # Check broker minimum stops level
+        stops_level_points = symbol_info.trade_stops_level
+        min_stop_distance = stops_level_points * point
+
+        if min_stop_distance > 0 and sl_distance < min_stop_distance:
+            logger.warning(f"ATR SL distance ({sl_distance}) is below broker min stop level ({min_stop_distance}). Widening SL.")
+            sl_distance = min_stop_distance
+            if decision.upper() == "BUY":
+                sl_price = round(entry_price - sl_distance, digits)
+            else:
+                sl_price = round(entry_price + sl_distance, digits)
+
+        if min_stop_distance > 0 and tp_distance < min_stop_distance:
+            tp_distance = min_stop_distance
+            if decision.upper() == "BUY":
+                tp_price = round(entry_price + tp_distance, digits)
+            else:
+                tp_price = round(entry_price - tp_distance, digits)
+
+        # Dynamic lot sizing
+        account = self.get_account_info()
+        if not account:
+            return {"status": "error", "message": "Failed to get account info"}
+
+        balance = account["balance"]
+        risk_amount = balance * (self.risk_per_trade_pct / 100.0)
+
         tick_value = symbol_info.trade_tick_value
         tick_size = symbol_info.trade_tick_size
-        if tick_size > 0:
-            loss_value = (sl_points * point / tick_size) * tick_value * final_lot
-            max_drawdown_pct = self.config.get('risk_parameters', {}).get('max_drawdown_pct', 0.05)
-            if loss_value > (balance * max_drawdown_pct):
-                msg = f"REJECTED: SL risk {loss_value} exceeds max drawdown allowed {balance * max_drawdown_pct}"
-                logger.warning(msg)
-                return {"status": "rejected", "message": msg}
+
+        if tick_size <= 0 or tick_value <= 0:
+            return {"status": "error", "message": "Invalid tick size or tick value from broker"}
+
+        sl_distance_ticks = sl_distance / tick_size
+        loss_per_lot = sl_distance_ticks * tick_value
+
+        if loss_per_lot <= 0:
+            return {"status": "error", "message": "Invalid loss calculation per lot"}
+
+        raw_lot = risk_amount / loss_per_lot
+
+        vol_min = symbol_info.volume_min
+        vol_max = symbol_info.volume_max
+        vol_step = symbol_info.volume_step
+
+        if vol_step > 0:
+            raw_lot = math.floor(raw_lot / vol_step) * vol_step
+
+        final_lot = max(vol_min, min(raw_lot, vol_max, self.max_lot_size))
+        final_lot = round(final_lot, 2)
+
+        return {
+            "status": "calculated",
+            "symbol": symbol,
+            "action": decision.upper(),
+            "order_type": order_type,
+            "entry": entry_price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "lot": final_lot,
+            "atr": round(atr_value, digits),
+            "sl_distance": round(sl_distance, digits),
+            "tp_distance": round(tp_distance, digits),
+            "risk_amount": round(risk_amount, 2),
+            "risk_reward_ratio": round(self.atr_multiplier_tp / self.atr_multiplier_sl, 2),
+        }
+
+    def execute_trade(self, trade_params: Dict) -> Dict:
+        symbol = trade_params["symbol"]
+        action = trade_params["action"]
+        order_type = trade_params["order_type"]
+        entry_price = trade_params["entry"]
+        sl = trade_params["sl"]
+        tp = trade_params["tp"]
+        final_lot = trade_params["lot"]
+
+        logger.info(f"[EXECUTION] Executing {action} {symbol} lot={final_lot} entry={entry_price} sl={sl} tp={tp}")
+
+        open_positions = self.get_open_positions()
+        if len(open_positions) >= self.max_open_trades:
+            msg = f"REJECTED: Max open trades ({self.max_open_trades}) reached"
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
+
+        account = self.get_account_info()
+        if not account:
+            return {"status": "error", "message": "Could not get account info"}
+
+        balance = account.get("balance", 0)
+        risk_amount = trade_params.get("risk_amount", 0)
+        max_allowed_risk = balance * (self.max_drawdown_pct / 100.0)
+
+        if risk_amount > max_allowed_risk:
+            msg = f"REJECTED: Risk ${risk_amount:.2f} exceeds max drawdown allowed ${max_allowed_risk:.2f}"
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
+
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return {"status": "error", "message": f"Failed to get live tick for {symbol}"}
+
+        live_price = float(tick.ask if action == "BUY" else tick.bid)
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": float(final_lot),
             "type": order_type,
-            "price": price,
+            "price": live_price,
             "sl": sl,
             "tp": tp,
             "deviation": 20,
             "magic": 234000,
-            "comment": "python_script",
+            "comment": "forex_local_agent",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
-        
+
         result = mt5.order_send(request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             logger.error(f"Order failed, retcode={result.retcode}")
             return {"status": "error", "message": f"Order failed with retcode {result.retcode}"}
-            
+
         logger.info(f"Order successful: ticket={result.order}")
         return {
             "status": "success",
@@ -191,7 +333,7 @@ class MT5Engine:
             "price": result.price,
             "lot": result.volume,
             "sl": sl,
-            "tp": tp
+            "tp": tp,
         }
 
     def get_open_positions(self) -> List[Dict]:
@@ -205,13 +347,3 @@ class MT5Engine:
         if deals is None:
             return []
         return [d._asdict() for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
-
-    def reconnect(self) -> bool:
-        for attempt in range(3):
-            logger.info(f"Reconnection attempt {attempt + 1}")
-            self.shutdown()
-            time.sleep(5)
-            if self.initialize():
-                return True
-        logger.error("Failed to reconnect after 3 attempts")
-        return False
