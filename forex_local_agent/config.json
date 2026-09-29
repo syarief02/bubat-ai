@@ -15,7 +15,8 @@
     "max_drawdown_pct": 2.0,
     "max_open_trades": 3,
     "confidence_threshold": 0.80,
-    "approval_timeout_seconds": 300
+    "approval_timeout_seconds": 300,
+    "auto_approve": true
   },
   "trading": {
     "symbols": [

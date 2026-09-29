@@ -171,10 +171,19 @@ class ForexAgent:
                         "confidence": int(decision.confidence_score * 100),
                         "reasoning": decision.reasoning,
                     }
-                    await self.openclaw.send_trade_proposal(proposal)
+                    auto_approve = self.config.get("risk_parameters", {}).get("auto_approve", True)
+                    whatsapp_number = self.config.get("alerts", {}).get("whatsapp_number")
 
-                    # Wait for human approval
-                    approved = await self.openclaw.wait_for_approval(timeout_seconds=self.approval_timeout)
+                    if auto_approve or not whatsapp_number:
+                        logger.info(f"[{symbol}] Autonomous Execution Mode: Trade AUTO-APPROVED through deterministic Risk Wall.")
+                        approved = True
+                    else:
+                        sent = await self.openclaw.send_trade_proposal(proposal)
+                        if sent:
+                            approved = await self.openclaw.wait_for_approval(timeout_seconds=self.approval_timeout)
+                        else:
+                            logger.warning(f"[{symbol}] WhatsApp proposal could not be sent. Trade NOT approved.")
+                            approved = False
 
                     if approved:
                         logger.info(f"[{symbol}] Trade APPROVED — executing through risk wall...")
