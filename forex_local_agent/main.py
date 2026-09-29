@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from loguru import logger
 
-# Ensure directory is on sys.path
+# Ensure agent directory is in sys.path
 agent_root = str(Path(__file__).resolve().parent)
 if agent_root not in sys.path:
     sys.path.insert(0, agent_root)

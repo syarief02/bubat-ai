@@ -204,3 +204,4 @@ class SupabaseManager:
         # Fallback query
         res = self.execute_query(f"SELECT * FROM forex_trade_decisions ORDER BY created_at DESC LIMIT {limit};")
         return res.get("data", [])
+

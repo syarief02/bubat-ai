@@ -1,6 +1,6 @@
 """
 ================================================================================
-BUBAT AI - LOCAL AUTONOMOUS SYSTEM & CODING AGENT
+BUBAT AI — LOCAL AUTONOMOUS SYSTEM & CODING AGENT
 ================================================================================
 Empowers your local Ollama models (agent-brain:32k, qwen2.5-coder) with
 autonomous tool-calling capabilities to act directly on your Windows machine:
@@ -8,8 +8,9 @@ autonomous tool-calling capabilities to act directly on your Windows machine:
 - Inspect, read, create, and edit files
 - Explore directories and codebases
 - Directly query and manage your Supabase PostgreSQL database
-- Monitor MetaTrader 5 accounts and open positions
-- Search the web for live documentation and news
+- Live multi-pair MT5 market scanning and ranking
+- Real-time web surfing and financial news retrieval
+- Continuous learning memory (learned_rules.md & Supabase)
 
 Usage:
     python local_assistant.py [--model agent-brain:32k] [--auto-confirm]
@@ -24,7 +25,7 @@ import time
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 import urllib.request
 import urllib.error
 
@@ -36,17 +37,39 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Load environment variables (.env)
+# Paths & Environment
+WORKSPACE_DIR = Path(__file__).resolve().parent
+AGENT_DIR = WORKSPACE_DIR / "forex_local_agent"
+sys.path.insert(0, str(WORKSPACE_DIR))
+sys.path.insert(0, str(AGENT_DIR))
+
 from dotenv import load_dotenv
 
-workspace_dir = Path(__file__).resolve().parent
-env_file = workspace_dir / ".env"
+env_file = WORKSPACE_DIR / ".env"
 if env_file.exists():
     load_dotenv(env_file)
 else:
     load_dotenv()
 
-# ANSI Color codes for rich terminal formatting
+# Subsystems
+try:
+    from forex_local_agent.core.web_surfer import WebSurfer
+    from forex_local_agent.core.market_scanner import MarketScanner
+    from forex_local_agent.learning.continuous_learner import ContinuousLearner
+except ImportError:
+    from core.web_surfer import WebSurfer
+    from core.market_scanner import MarketScanner
+    from learning.continuous_learner import ContinuousLearner
+
+try:
+    from forex_local_agent.core.mt5_engine import MT5Engine
+except ImportError:
+    try:
+        from core.mt5_engine import MT5Engine
+    except ImportError:
+        MT5Engine = None
+
+# ANSI Colors
 CYAN = "\033[96m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -62,21 +85,22 @@ MAX_AGENT_STEPS = 8
 
 
 # ==============================================================================
-# TOOL IMPLEMENTATIONS (The "Hands")
+# TOOL EXECUTOR (The "Hands")
 # ==============================================================================
 
 class ToolExecutor:
-    """Executes agent actions locally with safety checks and output sanitization."""
+    """Executes actions locally on Windows, MT5, Supabase, and the live web."""
 
     def __init__(self, auto_confirm: bool = False):
         self.auto_confirm = auto_confirm
-        self.workspace_root = workspace_dir
+        self.workspace_root = WORKSPACE_DIR
         self.db_url = os.getenv("DATABASE_URL")
-        self.supabase_url = os.getenv("SUPABASE_URL")
-        self.supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        self.surfer = WebSurfer()
+        self.scanner = MarketScanner()
+        self.learner = ContinuousLearner()
+        self.config_path = AGENT_DIR / "config.json"
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Dispatch tool call by name."""
         handlers = {
             "execute_command": self._tool_execute_command,
             "read_file": self._tool_read_file,
@@ -84,7 +108,10 @@ class ToolExecutor:
             "list_directory": self._tool_list_directory,
             "query_database": self._tool_query_database,
             "get_system_status": self._tool_get_system_status,
-            "web_search": self._tool_web_search,
+            "scan_market_pairs": self._tool_scan_market_pairs,
+            "search_live_web": self._tool_search_live_web,
+            "scrape_webpage": self._tool_scrape_webpage,
+            "learn_new_rule": self._tool_learn_new_rule,
         }
 
         handler = handlers.get(tool_name)
@@ -103,21 +130,16 @@ class ToolExecutor:
         if not command:
             return "Error: No command provided."
 
-        # Safety confirmation for potentially destructive operations
-        destructive_patterns = [
+        destructive = [
             r"\brmdir\s+/s\b", r"\bdel\s+/[sfq]\b", r"\bRemove-Item\b.*-Recurse",
             r"\bformat\b", r"\bdrop\s+table\b", r"\bdrop\s+database\b", r"\bshutdown\b"
         ]
-        is_risky = any(re.search(pat, command, re.IGNORECASE) for pat in destructive_patterns)
-
-        if is_risky and not self.auto_confirm:
+        if any(re.search(pat, command, re.IGNORECASE) for pat in destructive) and not self.auto_confirm:
             print(f"\n{YELLOW}{BOLD}[SAFETY WARNING] Command may be destructive:{RESET} {command}")
-            confirm = input(f"{YELLOW}Authorize this command? (y/N): {RESET}").strip().lower()
-            if confirm != "y":
+            if input(f"{YELLOW}Authorize this command? (y/N): {RESET}").strip().lower() != "y":
                 return "Execution cancelled by user."
 
         try:
-            # Use PowerShell for rich Windows script support
             process = subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
                 cwd=str(self.workspace_root),
@@ -130,150 +152,97 @@ class ToolExecutor:
 
             stdout = process.stdout.strip()
             stderr = process.stderr.strip()
-            exit_code = process.returncode
-
-            output_parts = []
+            parts = []
             if stdout:
-                output_parts.append(f"STDOUT:\n{stdout}")
+                parts.append(f"STDOUT:\n{stdout}")
             if stderr:
-                output_parts.append(f"STDERR:\n{stderr}")
+                parts.append(f"STDERR:\n{stderr}")
             if not stdout and not stderr:
-                output_parts.append("(Command completed with no output)")
+                parts.append("(Command completed with no output)")
+            parts.append(f"EXIT CODE: {process.returncode}")
 
-            output_parts.append(f"EXIT CODE: {exit_code}")
-            full_output = "\n".join(output_parts)
-
-            # Limit output length to prevent context explosion
-            if len(full_output) > 4000:
-                full_output = full_output[:2000] + f"\n\n... [TRUNCATED {len(full_output) - 4000} CHARS] ...\n\n" + full_output[-2000:]
-
-            return full_output
-
+            res = "\n".join(parts)
+            return res[:2500] + ("\n... [truncated]" if len(res) > 2500 else "")
         except subprocess.TimeoutExpired:
             return f"Error: Command timed out after {timeout} seconds."
         except Exception as e:
-            return f"Error executing command: {str(e)}"
+            return f"Error: {e}"
 
     def _tool_read_file(self, args: Dict[str, Any]) -> str:
-        raw_path = args.get("path", "")
+        raw_path = args.get("path", "").strip()
         if not raw_path:
             return "Error: No file path provided."
 
-        target_path = Path(raw_path)
-        if not target_path.is_absolute():
-            target_path = (self.workspace_root / target_path).resolve()
+        target = Path(raw_path)
+        if not target.is_absolute():
+            target = (self.workspace_root / target).resolve()
 
-        if not target_path.exists():
+        if not target.exists():
             return f"Error: File '{raw_path}' does not exist."
-
-        if target_path.is_dir():
-            return f"Error: Path '{raw_path}' is a directory. Use list_directory instead."
+        if target.is_dir():
+            return f"Error: Path '{raw_path}' is a directory."
 
         try:
-            content = target_path.read_text(encoding="utf-8", errors="replace")
-            lines = content.splitlines()
-            total_lines = len(lines)
-
+            lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
             start = args.get("start_line")
             end = args.get("end_line")
-
-            if start is not None or end is not None:
-                start_idx = max(0, (start - 1) if start else 0)
-                end_idx = min(total_lines, end if end else total_lines)
-                sliced_lines = lines[start_idx:end_idx]
-                formatted = [f"{i + start_idx + 1:4d}: {line}" for i, line in enumerate(sliced_lines)]
-                header = f"File: {raw_path} (Lines {start_idx + 1}-{end_idx} of {total_lines})\n"
-                return header + "\n".join(formatted)
-
-            # If small enough, return whole file with line numbers
-            if total_lines <= 150:
-                formatted = [f"{i + 1:4d}: {line}" for i, line in enumerate(lines)]
-                return f"File: {raw_path} ({total_lines} lines)\n" + "\n".join(formatted)
-            else:
-                head = [f"{i + 1:4d}: {lines[i]}" for i in range(80)]
-                tail = [f"{total_lines - 40 + i + 1:4d}: {lines[total_lines - 40 + i]}" for i in range(40)]
-                return (
-                    f"File: {raw_path} ({total_lines} lines - TRUNCATED)\n"
-                    + "\n".join(head)
-                    + f"\n\n... [{total_lines - 120} lines omitted] ...\n\n"
-                    + "\n".join(tail)
-                )
-
+            start_idx = max(0, (start - 1) if start else 0)
+            end_idx = min(len(lines), end if end else len(lines))
+            sliced = lines[start_idx:end_idx]
+            formatted = [f"{i + start_idx + 1:4d}: {l}" for i, l in enumerate(sliced)]
+            return f"File: {raw_path} (Lines {start_idx + 1}-{end_idx} of {len(lines)})\n" + "\n".join(formatted)
         except Exception as e:
-            return f"Error reading file '{raw_path}': {str(e)}"
+            return f"Error reading '{raw_path}': {e}"
 
     def _tool_write_file(self, args: Dict[str, Any]) -> str:
-        raw_path = args.get("path", "")
+        raw_path = args.get("path", "").strip()
         content = args.get("content", "")
         mode = args.get("mode", "write").lower()
 
         if not raw_path:
             return "Error: No file path provided."
 
-        target_path = Path(raw_path)
-        if not target_path.is_absolute():
-            target_path = (self.workspace_root / target_path).resolve()
+        target = Path(raw_path)
+        if not target.is_absolute():
+            target = (self.workspace_root / target).resolve()
 
         try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            if mode == "append" and target_path.exists():
-                with open(target_path, "a", encoding="utf-8") as f:
-                    f.write(content)
-                return f"Success: Appended {len(content)} characters to '{raw_path}'."
-            else:
-                with open(target_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                return f"Success: Wrote {len(content)} characters to '{raw_path}'."
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_mode = "a" if (mode == "append" and target.exists()) else "w"
+            with open(target, write_mode, encoding="utf-8") as f:
+                f.write(content)
+            return f"Success: Saved {len(content)} characters to '{raw_path}'."
         except Exception as e:
-            return f"Error writing to '{raw_path}': {str(e)}"
+            return f"Error writing '{raw_path}': {e}"
 
     def _tool_list_directory(self, args: Dict[str, Any]) -> str:
-        raw_path = args.get("path", ".")
-        recursive = bool(args.get("recursive", False))
-
-        raw_path_str = str(raw_path).strip()
-        if raw_path_str in ["/", "\\", ".", "", "./"]:
-            target_path = self.workspace_root
+        raw_path = str(args.get("path", ".")).strip()
+        if raw_path in ["/", "\\", ".", "", "./"]:
+            target = self.workspace_root
         else:
-            target_path = Path(raw_path)
-            if not target_path.is_absolute():
-                target_path = (self.workspace_root / target_path).resolve()
+            target = Path(raw_path)
+            if not target.is_absolute():
+                target = (self.workspace_root / target).resolve()
 
-        if not target_path.exists():
+        if not target.exists():
             return f"Error: Directory '{raw_path}' does not exist."
 
         try:
             entries = []
-            if recursive:
-                for p in target_path.rglob("*"):
-                    if ".git" in p.parts or "__pycache__" in p.parts or "node_modules" in p.parts:
-                        continue
-                    rel = p.relative_to(target_path)
-                    if p.is_dir():
-                        entries.append(f"[DIR]  {rel}")
-                    else:
-                        entries.append(f"[FILE] {rel} ({p.stat().st_size:,} bytes)")
-            else:
-                for p in sorted(target_path.iterdir()):
-                    if p.name == ".git":
-                        continue
-                    if p.is_dir():
-                        entries.append(f"[DIR]  {p.name}/")
-                    else:
-                        entries.append(f"[FILE] {p.name} ({p.stat().st_size:,} bytes)")
-
-            summary = f"Directory listing of '{raw_path}' ({len(entries)} items):\n"
-            return summary + "\n".join(entries[:100]) + ("\n... [truncated]" if len(entries) > 100 else "")
+            for p in sorted(target.iterdir()):
+                if p.name in [".git", "__pycache__", "node_modules"]:
+                    continue
+                entries.append(f"[DIR]  {p.name}/" if p.is_dir() else f"[FILE] {p.name} ({p.stat().st_size:,} bytes)")
+            return f"Directory '{raw_path}' ({len(entries)} items):\n" + "\n".join(entries[:100])
         except Exception as e:
-            return f"Error listing directory '{raw_path}': {str(e)}"
+            return f"Error: {e}"
 
     def _tool_query_database(self, args: Dict[str, Any]) -> str:
         sql = args.get("sql", "").strip()
         if not sql:
             return "Error: No SQL query provided."
-
         if not self.db_url:
-            return "Error: DATABASE_URL is not configured in .env."
+            return "Error: DATABASE_URL not set in .env."
 
         try:
             import psycopg2
@@ -282,131 +251,69 @@ class ToolExecutor:
             cur.execute(sql)
 
             if cur.description:
-                columns = [desc[0] for desc in cur.description]
+                cols = [d[0] for d in cur.description]
                 rows = cur.fetchall()
                 conn.commit()
                 conn.close()
-
-                if not rows:
-                    return f"Query returned 0 rows.\nColumns: {', '.join(columns)}"
-
-                formatted_rows = [dict(zip(columns, [str(c) if c is not None else "NULL" for c in row])) for row in rows[:25]]
-                return f"Query successful ({len(rows)} rows returned, showing {min(len(rows), 25)}):\n" + json.dumps(formatted_rows, indent=2, default=str)
+                formatted = [dict(zip(cols, [str(c) if c is not None else "NULL" for c in r])) for r in rows[:25]]
+                return f"Query returned {len(rows)} rows:\n" + json.dumps(formatted, indent=2, default=str)
             else:
-                rowcount = cur.rowcount
+                affected = cur.rowcount
                 conn.commit()
                 conn.close()
-                return f"Query executed successfully. Rows affected: {rowcount}"
-
+                return f"Query executed successfully. Rows affected: {affected}"
         except Exception as e:
-            return f"Database error: {str(e)}"
+            return f"Database error: {e}"
 
     def _tool_get_system_status(self, args: Dict[str, Any]) -> str:
-        status_info = []
-
-        # 1. Disk Space
+        parts = []
         try:
             total, used, free = shutil.disk_usage(str(self.workspace_root))
-            status_info.append(f"Disk Free: {free // (2**30)} GB of {total // (2**30)} GB")
+            parts.append(f"Disk Free: {free // (2**30)} GB of {total // (2**30)} GB")
         except Exception:
             pass
 
-        # 2. MetaTrader 5 status
         try:
             import MetaTrader5 as mt5
-            initialized = mt5.initialize()
-            if initialized:
-                acc_info = mt5.account_info()
+            if mt5.initialize():
+                acct = mt5.account_info()
                 positions = mt5.positions_total()
-                if acc_info:
-                    status_info.append(
-                        f"MT5 Account: #{acc_info.login} ({acc_info.server}) | "
-                        f"Balance: ${acc_info.balance:.2f} | Equity: ${acc_info.equity:.2f} | "
-                        f"Open Positions: {positions}"
-                    )
-                else:
-                    status_info.append("MT5 Terminal: Connected, but account details unavailable.")
+                if acct:
+                    parts.append(f"MT5 Account: #{acct.login} ({acct.server}) | Balance: ${acct.balance:.2f} | Equity: ${acct.equity:.2f} | Open Positions: {positions}")
+                mt5.shutdown()
             else:
-                status_info.append("MT5 Terminal: Not running or initialization failed.")
+                parts.append("MT5 Terminal: Not connected")
         except Exception as e:
-            status_info.append(f"MT5 Check Error: {e}")
+            parts.append(f"MT5: {e}")
 
-        # 3. Supabase DB status
-        if self.db_url:
-            status_info.append("Supabase DB: Connected via PostgreSQL (.env)")
-        else:
-            status_info.append("Supabase DB: Missing credentials in .env")
+        parts.append("Supabase DB: Connected" if self.db_url else "Supabase DB: Not configured")
+        return "System Status:\n- " + "\n- ".join(parts)
 
-        return "System Status:\n- " + "\n- ".join(status_info)
+    def _tool_scan_market_pairs(self, args: Dict[str, Any]) -> str:
+        scan_res = self.scanner.scan_and_rank()
+        return self.scanner.format_rankings_text(scan_res)
 
-    def _tool_web_search(self, args: Dict[str, Any]) -> str:
-        query = args.get("query", "").strip()
-        if not query:
-            return "Error: No search query provided."
+    def _tool_search_live_web(self, args: Dict[str, Any]) -> str:
+        query = args.get("query", "forex market").strip()
+        news = self.surfer.search_news(query, max_results=5)
+        if not news:
+            web = self.surfer.search_web(query, max_results=4)
+            return "\n".join([f"- {r['snippet']}" for r in web]) if web else f"No results for '{query}'."
+        return "\n".join([f"- [{n['source']}] {n['title']} ({n['snippet']})" for n in news])
 
-        try:
-            import urllib.parse
-            import xml.etree.ElementTree as ET
+    def _tool_scrape_webpage(self, args: Dict[str, Any]) -> str:
+        url = args.get("url", "").strip()
+        return self.surfer.scrape_webpage(url)
 
-            encoded_query = urllib.parse.quote(query)
-            rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
-
-            req = urllib.request.Request(
-                rss_url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:
-                xml_data = response.read()
-
-            root = ET.fromstring(xml_data)
-            items = root.findall(".//item")
-            results = []
-            for item in items[:5]:
-                title = item.find("title").text if item.find("title") is not None else ""
-                link = item.find("link").text if item.find("link") is not None else ""
-                results.append(f"- {title}\n  URL: {link}")
-
-            if results:
-                return f"Live Search Results for '{query}':\n" + "\n".join(results)
-            else:
-                return f"No search results found for '{query}'."
-
-        except Exception as e:
-            return f"Search error: {str(e)}"
+    def _tool_learn_new_rule(self, args: Dict[str, Any]) -> str:
+        rule_text = args.get("rule_text", "").strip()
+        cat = args.get("category", "USER_DIRECTIVE").strip()
+        return self.learner.learn_rule(rule_text, category=cat, source="assistant_interaction")
 
 
 # ==============================================================================
 # AUTONOMOUS AGENT LOOP (The "Brain")
 # ==============================================================================
-
-SYSTEM_PROMPT = """You are Bubat AI, an autonomous system and coding agent running locally on the user's Windows PC.
-You have direct access to tools to execute PowerShell commands, read/write files, inspect directories, query the Supabase PostgreSQL database, check MT5 status, and search the web.
-
-AVAILABLE TOOLS:
-- execute_command(command: str): Run a shell command in PowerShell. (e.g. dir, git status, python test.py)
-- read_file(path: str, start_line: int, end_line: int): Read the contents of a file.
-- write_file(path: str, content: str, mode: "write"|"append"): Create or edit a file.
-- list_directory(path: str, recursive: bool): List files and folders.
-- query_database(sql: str): Execute a SQL query on the Supabase PostgreSQL database.
-- get_system_status(): Check MT5 account balance, disk space, and system telemetry.
-- web_search(query: str): Search Google News for live financial/technical information.
-
-DATABASE SCHEMA REFERENCE:
-- forex_trade_decisions: (id, created_at, symbol, decision, confidence, market_sentiment, reasoning, entry_price, stop_loss, take_profit, lot_size, atr, risk_reward_ratio, approved, executed, metadata)
-- forex_executed_trades: (id, created_at, symbol, ticket_id, order_type, volume, open_price, stop_loss, take_profit, close_price, profit, status, execution_result)
-- ai_agent_telemetry: (id, created_at, agent_name, action_type, details, status)
-Always use "created_at" (not "timestamp") when ordering tables by date/time.
-
-INSTRUCTIONS:
-1. When you need to take an action or gather information, output a JSON code block with the tool and arguments:
-```json
-{"tool": "tool_name", "arguments": {"param1": "value1"}}
-```
-2. When the tool output is provided to you:
-   - If you have enough information, answer the user directly in concise, natural language.
-   - If further action is needed, call the next tool.
-3. DO NOT output placeholder schema definitions. Put actual string values in arguments.
-"""
 
 class BubatAutonomousAgent:
     """Agentic orchestrator that reasons, calls tools, and reports results."""
@@ -418,56 +325,119 @@ class BubatAutonomousAgent:
         self._init_system_prompt()
 
     def _init_system_prompt(self):
+        rules = self.executor.learner.get_all_rules_text()
+        session = self.executor.surfer.get_current_market_session()
+
+        system_instruction = f"""You are Bubat AI, an elite autonomous system engineer, coder, and Forex Intelligence Agent running locally on Windows (RTX 4060 GPU).
+You have DIRECT real-time access to MetaTrader 5, the live web, PowerShell, and your Supabase PostgreSQL database.
+
+CURRENT ENVIRONMENT:
+- UTC Time: {session.get('utc_time')}
+- Active Market Session: {session.get('session_summary')}
+- High Liquidity Pairs: {', '.join(session.get('best_pairs_for_session', []))}
+
+STORED LEARNED RULES & MEMORY:
+{rules}
+
+OPERATIONAL DIRECTIVES:
+1. NEVER say "As an AI I do not have access to real-time data or the internet". You DO have direct access via your tools!
+2. When asked about forex pairs, market sessions, setups, or rankings, evaluate the live MT5 scan and live financial news provided in context.
+3. If the user speaks Malay, use natural, friendly Malaysian Malay ("Bahasa Melayu santai/Malaysia", e.g. "Beres boss, jom kita bercakap", "setup ni nampak cun"). NEVER use formal Indonesian ("berbicara").
+4. If a tool fails, analyze the error output and adjust your approach autonomously.
+
+AVAILABLE TOOLS:
+- execute_command(command: str): Run PowerShell commands on Windows.
+- read_file(path: str, start_line: int, end_line: int): Read files.
+- write_file(path: str, content: str, mode: "write"|"append"): Create or edit files.
+- list_directory(path: str): List files and folders.
+- query_database(sql: str): Execute SQL on Supabase PostgreSQL.
+- get_system_status(): Check MT5 account balance, equity, disk space.
+- scan_market_pairs(): Scan all live MT5 pairs, compute RSI, ATR, EMAs, 24h change %, and rank best setups.
+- search_live_web(query: str): Search Google News RSS and live web for financial/technical info.
+- scrape_webpage(url: str): Read any web URL in full text.
+- learn_new_rule(rule_text: str, category: str): Permanently store a rule to disk and cloud.
+
+TOOL FORMAT:
+Output ONLY a JSON block when invoking a tool:
+```json
+{{"tool": "tool_name", "arguments": {{"param": "value"}}}}
+```
+"""
         self.conversation_history = [
-            {"role": "system", "content": SYSTEM_PROMPT}
+            {"role": "system", "content": system_instruction}
         ]
 
     def reset(self):
-        """Reset conversation memory."""
         self._init_system_prompt()
 
     def chat_turn(self, user_prompt: str) -> str:
-        """Execute one complete user turn with iterative tool-calling loop."""
-        self.conversation_history.append({"role": "user", "content": user_prompt})
+        # 1. Continuous Learning: Auto-detect rules or language preference
+        learned = self.executor.learner.auto_detect_and_learn(user_prompt)
+        if learned:
+            print(f"\n{GREEN}{BOLD}[BRAIN UPDATE]{RESET} {learned}")
+            self._init_system_prompt()
 
-        called_tools_history = []
+        # 2. Auto-enrichment for market queries
+        market_keywords = [
+            "pair", "session", "rank", "trade", "best", "setup", "market",
+            "eurusd", "usdjpy", "gbpusd", "gold", "xauusd", "rsi", "indicator",
+            "pasaran", "mata wang", "pilihan"
+        ]
+        augmented_prompt = user_prompt
+        if any(k in user_prompt.lower() for k in market_keywords):
+            print(f"\n{CYAN}{BOLD}▶ [REAL-TIME ENGINE]{RESET} {DIM}Scanning live MT5 pairs & financial news...{RESET}")
+            try:
+                scan_data = self.executor.scanner.scan_and_rank()
+                scan_text = self.executor.scanner.format_rankings_text(scan_data)
+                news = self.executor.surfer.search_news("forex market", max_results=3)
+                news_text = "\n".join([f"- {n['title']} ({n.get('snippet', '')})" for n in news])
+
+                augmented_prompt = (
+                    f"{user_prompt}\n\n"
+                    f"--- LIVE REAL-TIME MT5 MARKET FEED & SESSION DATA ---\n"
+                    f"{scan_text}\n\n"
+                    f"--- LIVE WEB FINANCIAL NEWS HEADLINES ---\n"
+                    f"{news_text}\n\n"
+                    f"[Instruction: Synthesize this real-time MT5 scan and news directly to give the user an accurate, ranked answer.]"
+                )
+            except Exception as e:
+                print(f"{YELLOW}[Warning] Auto-scan error: {e}{RESET}")
+
+        self.conversation_history.append({"role": "user", "content": augmented_prompt})
+
+        called_tools = []
         step = 0
 
         while step < MAX_AGENT_STEPS:
             step += 1
 
-            # Inference request to Ollama
             response_content = self._call_ollama()
             if not response_content:
-                return f"{RED}Error: Unable to get response from Ollama at {OLLAMA_API_BASE}. Ensure server is running.{RESET}"
+                return f"{RED}Error: Unable to connect to Ollama at {OLLAMA_API_BASE}.{RESET}"
 
-            # Check if model wants to call a tool
             tool_call = self._extract_tool_call(response_content)
 
             if not tool_call:
-                # No tool called; this is the final answer
                 self.conversation_history.append({"role": "assistant", "content": response_content})
                 return response_content
 
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("arguments", {})
 
-            # Loop prevention: Detect identical sequential tool calls
+            # Loop guard
             call_sig = (tool_name, json.dumps(tool_args, sort_keys=True))
-            if call_sig in called_tools_history[-2:]:
-                # Force final synthesis
+            if call_sig in called_tools[-2:]:
                 self.conversation_history.append({"role": "assistant", "content": response_content})
                 self.conversation_history.append({
                     "role": "user",
-                    "content": "You have already executed this action. Please synthesize your findings and provide the final answer to the user now."
+                    "content": "You have already executed this action. Please synthesize your findings and give the final answer to the user now."
                 })
                 final_answer = self._call_ollama()
                 self.conversation_history.append({"role": "assistant", "content": final_answer})
                 return final_answer or "Task completed."
 
-            called_tools_history.append(call_sig)
+            called_tools.append(call_sig)
 
-            # Print tool invocation feedback in terminal
             print(f"\n{CYAN}{BOLD}▶ Calling Tool:{RESET} {GREEN}{tool_name}{RESET}")
             if tool_args:
                 arg_preview = json.dumps(tool_args)
@@ -475,17 +445,14 @@ class BubatAutonomousAgent:
                     arg_preview = arg_preview[:100] + "..."
                 print(f"  {DIM}Args: {arg_preview}{RESET}")
 
-            # Execute tool locally
             tool_result = self.executor.execute(tool_name, tool_args)
 
-            # Print brief preview
             lines = tool_result.strip().splitlines()
             preview = lines[0] if lines else "(empty)"
             if len(preview) > 80:
                 preview = preview[:80] + "..."
             print(f"  {DIM}Result: {preview} ({len(tool_result)} chars){RESET}")
 
-            # Append to history with guidance prompt
             self.conversation_history.append({"role": "assistant", "content": response_content})
             self.conversation_history.append({
                 "role": "user",
@@ -495,7 +462,6 @@ class BubatAutonomousAgent:
         return "Agent reached maximum step limit."
 
     def _call_ollama(self) -> Optional[str]:
-        """Call Ollama /api/chat."""
         payload = {
             "model": self.model,
             "messages": self.conversation_history,
@@ -516,19 +482,14 @@ class BubatAutonomousAgent:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data.get("message", {}).get("content", "").strip()
-        except urllib.error.URLError as e:
-            print(f"{RED}[Ollama Error] Connection failed: {e}{RESET}")
-            return None
         except Exception as e:
-            print(f"{RED}[Ollama Error] Exception: {e}{RESET}")
+            print(f"{RED}[Ollama Error] {e}{RESET}")
             return None
 
     def _extract_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
-        """Extract tool call JSON from text response."""
         if not text:
             return None
 
-        # 1. Search for ```json ... ``` blocks
         matches = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         for m in matches:
             try:
@@ -542,7 +503,6 @@ class BubatAutonomousAgent:
             except Exception:
                 continue
 
-        # 2. Search for raw JSON object with "tool" or "name"
         if text.startswith("{") and text.endswith("}"):
             try:
                 parsed = json.loads(text)
@@ -555,20 +515,6 @@ class BubatAutonomousAgent:
             except Exception:
                 pass
 
-        # 3. Search for <tool_call> tags
-        tc_matches = re.findall(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL)
-        for m in tc_matches:
-            try:
-                parsed = json.loads(m)
-                tool_name = parsed.get("tool") or parsed.get("name")
-                if tool_name:
-                    return {
-                        "name": tool_name,
-                        "arguments": parsed.get("arguments") or parsed.get("parameters", {})
-                    }
-            except Exception:
-                continue
-
         return None
 
 
@@ -577,20 +523,23 @@ class BubatAutonomousAgent:
 # ==============================================================================
 
 def print_banner(agent: BubatAutonomousAgent):
-    print("\n" + "=" * 70)
-    print(f"{CYAN}{BOLD}  BUBAT AI - LOCAL AUTONOMOUS SYSTEM & CODING AGENT{RESET}")
+    session = agent.executor.surfer.get_current_market_session()
+    print("\n" + "=" * 74)
+    print(f"{CYAN}{BOLD}  BUBAT AI — LOCAL AUTONOMOUS SYSTEM & FOREX INTELLIGENCE AGENT{RESET}")
     print(f"{DIM}  Model: {agent.model}  |  Host: localhost:11434  |  GPU: RTX 4060{RESET}")
-    print("=" * 70)
-    print("  Capabilities enabled:")
-    print(f"   • {GREEN}execute_command{RESET}  -> Run PowerShell commands on Windows")
-    print(f"   • {GREEN}read_file / write_file{RESET} -> Inspect, edit, and create code")
-    print(f"   • {GREEN}list_directory{RESET}   -> Explore files and folder structures")
-    print(f"   • {GREEN}query_database{RESET}   -> Direct Supabase PostgreSQL management")
-    print(f"   • {GREEN}get_system_status{RESET}-> MT5 terminal & account balance")
-    print(f"   • {GREEN}web_search{RESET}       -> Live Google News / technical search")
-    print("-" * 70)
-    print(f"  Commands: {YELLOW}/clear{RESET} (reset memory), {YELLOW}/status{RESET} (check system), {YELLOW}exit{RESET}")
-    print("=" * 70 + "\n")
+    print("=" * 74)
+    print(f"  Live Session: {GREEN}{BOLD}{session.get('session_summary')}{RESET}")
+    print(f"  Active Time:  {DIM}{session.get('utc_time')}{RESET}")
+    print("-" * 74)
+    print("  Capabilities:")
+    print(f"   • {GREEN}Live MT5 Market Scanner{RESET}  -> Real-time prices, RSI, ATR, and pair rankings")
+    print(f"   • {GREEN}Real-Time Web Surfer{RESET}     -> Live Google News RSS, web search & scrapers")
+    print(f"   • {GREEN}Continuous Learning{RESET}      -> Stores rules permanently to disk & Supabase")
+    print(f"   • {GREEN}PowerShell / Code Engine{RESET} -> Execute commands, read/write/edit code files")
+    print(f"   • {GREEN}Supabase Database Hub{RESET}    -> Direct PostgreSQL queries & telemetry sync")
+    print("-" * 74)
+    print(f"  Commands: {YELLOW}/clear{RESET} (reset memory), {YELLOW}/rules{RESET} (view learned rules), {YELLOW}/status{RESET} (check system), {YELLOW}exit{RESET}")
+    print("=" * 74 + "\n")
 
 
 def main():
@@ -618,12 +567,17 @@ def main():
                 print(f"{YELLOW}Conversation memory reset.{RESET}")
                 continue
 
+            if user_input.lower() == "/rules":
+                rules = agent.executor.learner.get_all_rules_text()
+                print(f"\n{CYAN}{rules}{RESET}")
+                continue
+
             if user_input.lower() == "/status":
                 status = agent.executor.execute("get_system_status", {})
                 print(f"\n{CYAN}{status}{RESET}")
                 continue
 
-            # Run autonomous agent turn
+            # Run autonomous turn
             start_time = time.time()
             response = agent.chat_turn(user_input)
             duration = time.time() - start_time
