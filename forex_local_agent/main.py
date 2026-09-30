@@ -78,6 +78,7 @@ class ForexAgent:
         # Symbol cooldown management to prevent revenge-trading
         self.symbol_cooldowns: dict[str, datetime] = {}
         self.cooldown_minutes = self.config.get("risk_parameters", {}).get("symbol_cooldown_minutes", 30)
+        self.processed_closed_tickets: set[int] = set()
 
         # Register signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -274,6 +275,11 @@ class ForexAgent:
             closed_trades = self.mt5_engine.check_closed_trades(since)
 
             for trade in closed_trades:
+                ticket = trade.get("ticket")
+                if not ticket or ticket in self.processed_closed_tickets:
+                    continue
+                self.processed_closed_tickets.add(ticket)
+
                 sym = trade.get("symbol")
                 if sym:
                     self.symbol_cooldowns[sym] = datetime.now(timezone.utc) + timedelta(minutes=self.cooldown_minutes)

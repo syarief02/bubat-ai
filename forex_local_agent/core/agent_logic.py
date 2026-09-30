@@ -52,7 +52,12 @@ class AgentLogic:
         if self.rules_path.exists():
             try:
                 with open(self.rules_path, "r", encoding="utf-8") as f:
-                    return f.read()
+                    content = f.read().strip()
+                    # Safeguard: Cap learned rules to last 2000 chars to prevent prompt bloat
+                    if len(content) > 2000:
+                        lines = content.splitlines()
+                        return "\n".join(lines[-35:])
+                    return content
             except Exception as e:
                 logger.error(f"Failed to read learned rules: {e}")
         return ""
@@ -122,10 +127,14 @@ class AgentLogic:
             "system": system_prompt,
             "stream": False,
             "format": "json",
+            "options": {
+                "num_predict": 400,
+                "temperature": 0.2,
+            },
         }
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(f"{self.ollama_url}/api/generate", json=payload)
                 response.raise_for_status()
                 data = response.json()
