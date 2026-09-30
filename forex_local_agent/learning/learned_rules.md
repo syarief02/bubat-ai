@@ -496,3 +496,18 @@ RULE #202609301201 [EURAUD]: Implement a volume check before executing trades to
 RULE #202609302005 [CALENDAR/MACRO]: Enforce a 30-minute pre-release and 15-minute post-release trading blackout on any currency pair associated with High-Impact macroeconomic events (CPI, NFP, Fed/Central Bank Rate Decisions, GDP).
   Root cause: Agent entered trades minutes prior to US macroeconomic releases, causing sudden slippage and premature ATR Stop Loss hunting during volatility spikes.
   Lesson: Never gamble through high-impact macroeconomic releases; all trades on relevant currencies must be strictly rejected during the blackout window, and open positions should have stops protected.
+
+
+RULE #202609301417 [EURCAD]: Implement a risk management strategy that includes setting stop-loss and take-profit levels based on the market conditions and the potential impact of your trades. This will help you to minimize the potential losses and maximize the potential profits.
+  Root cause: The trade was executed at a price of 1.6109499999999999, which was significantly lower than the entry price of 1.61095. The trade was closed at a loss of 1.06.
+  Lesson: Always consider the market conditions and the potential impact of your trades before executing them. It is important to have a clear understanding of the market and the potential risks involved.
+
+
+RULE #202609301417 [EURJPY]: Implement a volume-based strategy to increase profitability
+  Root cause: Insufficient volume
+  Lesson: Ensure sufficient volume for profitable trades
+
+
+RULE #202609301421 [NZDUSD]: Always check the price you enter a trade at and ensure that it is the same as the price you expect to receive at the end of the trade. This will prevent losses and ensure that your trades are profitable.
+  Root cause: The trade was executed at a price of 0.56442, which was below the entry price of 0.56442, resulting in a loss.
+  Lesson: Always ensure that the price you enter a trade at is the same as the price you expect to receive at the end of the trade. In this case, the price was below the entry price, which led to a loss.
