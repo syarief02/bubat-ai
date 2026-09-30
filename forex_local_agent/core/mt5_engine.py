@@ -421,6 +421,19 @@ class MT5Engine:
 
         live_price = float(tick.ask if action == "BUY" else tick.bid)
 
+        # Margin Check: Ensure account has sufficient free margin
+        free_margin = account.get("free_margin", 0)
+        if free_margin <= 0:
+            msg = f"REJECTED: Insufficient free margin (${free_margin:.2f} available). Cannot open new trades."
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
+
+        req_margin = mt5.order_calc_margin(order_type, symbol, float(final_lot), live_price)
+        if req_margin is not None and req_margin > free_margin:
+            msg = f"REJECTED: Required margin (${req_margin:.2f}) exceeds free margin (${free_margin:.2f})."
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
+
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -437,9 +450,11 @@ class MT5Engine:
         }
 
         result = mt5.order_send(request)
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
-            logger.error(f"Order failed, retcode={result.retcode}")
-            return {"status": "error", "message": f"Order failed with retcode {result.retcode}"}
+        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+            retcode = result.retcode if result else "None"
+            comment = result.comment if result else "No response"
+            logger.error(f"Order failed, retcode={retcode} ({comment})")
+            return {"status": "error", "message": f"Order failed with retcode {retcode}: {comment}"}
 
         logger.info(f"Order successful: ticket={result.order}")
         return {
