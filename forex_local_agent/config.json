@@ -20,6 +20,12 @@
     "approval_timeout_seconds": 300,
     "auto_approve": true,
     "min_sl_pips": 15.0,
+    "cross_pair_min_sl_pips": 22.0,
+    "breakeven_trigger_pips": 10.0,
+    "breakeven_lock_pips": 1.0,
+    "trailing_start_pips": 15.0,
+    "trailing_distance_pips": 10.0,
+    "min_account_balance_gold": 300.0,
     "max_spread_pips": 3.5,
     "symbol_cooldown_minutes": 30
   },
