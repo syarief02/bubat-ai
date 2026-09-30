@@ -366,3 +366,43 @@ RULE #202609300500 [EURAUD]: Implement a volume check before executing trades to
 RULE #202609300510 [USDJPY]: Implement a volume check before placing orders to prevent insufficient volume errors
   Root cause: Insufficient volume to execute the order
   Lesson: Always ensure there is sufficient volume to execute an order before placing it
+
+
+RULE #202609300601 [EURAUD]: Increase your volume before placing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure you have enough volume to execute your trades
+
+
+RULE #202609300606 [GBPAUD]: Implement a volume check before executing orders to prevent losses
+  Root cause: Insufficient volume to execute the order
+  Lesson: Always ensure there is sufficient volume to execute an order before placing it
+
+
+RULE #202609300621 [USDJPY]: Set the entry price based on the expected price movement of the asset. This will help to minimize the risk of loss.
+  Root cause: The trade was executed at a price of 156.609, which was below the entry price of 156.610, resulting in a loss.
+  Lesson: Always ensure that the entry price is set correctly before executing a trade. In this case, the entry price was set too high, leading to a loss.
+
+
+RULE #202609300711 [EURUSD]: It is recommended to monitor the price of the asset and to adjust the trade accordingly to minimize the risk of loss.
+  Root cause: The trade was executed at a price of 1.13303, which resulted in a loss of 1.83 units.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to be aware of potential risks associated with the trade.
+
+
+RULE #202609300721 [EURAUD]: Implement a volume check before executing trades to prevent insufficient volume errors.
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume available to execute trades, especially in volatile markets.
+
+
+RULE #202609300721 [GBPAUD]: Increase the volume limit for the trade
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade
+
+
+RULE #202609300721 [USDJPY]: Implement a more stringent entry price check before executing trades, and consider using stop-loss orders to protect against losses.
+  Root cause: The trade was executed at a price of 156.609, which was below the entry price of 156.610, resulting in a loss.
+  Lesson: Always ensure that the entry price is set correctly before executing a trade, and consider using stop-loss orders to protect against losses.
+
+
+RULE #202609300721 [EURUSD]: In the future, it may be beneficial to set a higher stop loss level to reduce the potential loss of the trade.
+  Root cause: The trade was executed at a price of 1.13303, which resulted in a loss of 1.83 units.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to be aware of potential risks associated with the trade.

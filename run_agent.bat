@@ -12,7 +12,7 @@ echo [*] Checking Ollama server status...
 netstat -ano | findstr 11434 | findstr LISTENING >nul
 if %errorlevel% neq 0 (
     echo [!] Ollama is not running. Starting background Ollama server...
-    start "" /B "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve
+    start /b "" "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve >nul 2>&1
     timeout /t 3 /nobreak >nul
 ) else (
     echo [OK] Ollama server is active and listening on port 11434.

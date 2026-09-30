@@ -15,6 +15,7 @@ import sys
 import threading
 import schedule
 import time
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from loguru import logger
@@ -331,7 +332,12 @@ class ForexAgent:
 
     # ── Cycle Summary Table ───────────────────────────────────────────────
 
-    def _print_cycle_summary_table(self, cycle_results: list[dict]):
+    def _print_cycle_summary_table(
+        self,
+        cycle_results: list[dict],
+        next_close: Optional[datetime] = None,
+        sleep_seconds: Optional[float] = None
+    ):
         """Print a clean ASCII summary table of all symbols analyzed in this cycle."""
         if not cycle_results:
             return
@@ -343,7 +349,7 @@ class ForexAgent:
             free_margin = account.get("free_margin", 0.0)
             open_positions = self.mt5_engine.get_open_positions()
             open_count = len(open_positions)
-            max_trades = self.max_open_trades
+            max_trades = getattr(self, "max_open_trades", 10)
 
             now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             tf = self.timeframe.upper()
@@ -355,48 +361,55 @@ class ForexAgent:
             executed = sum(1 for r in cycle_results if "EXECUTED" in r.get("status", ""))
             rejected = sum(1 for r in cycle_results if "REJECTED" in r.get("status", ""))
 
-            sep = "+" + "-" * 10 + "+" + "-" * 12 + "+" + "-" * 12 + "+" + "-" * 20 + "+" + "-" * 52 + "+"
+            sep = "+" + "-" * 10 + "+" + "-" * 12 + "+" + "-" * 12 + "+" + "-" * 14 + "+" + "-" * 50 + "+"
             header_title = f"BUBAT AI - {tf} MARKET CYCLE ANALYSIS SUMMARY"
             time_title = f"Time: {now_str}"
 
             lines = [
                 "",
                 sep,
-                "| " + header_title.center(108) + " |",
-                "| " + time_title.center(108) + " |",
+                "| " + header_title.center(102) + " |",
+                "| " + time_title.center(102) + " |",
                 sep,
-                "| " + "SYMBOL".center(8) + " | " + "DECISION".center(10) + " | " + "CONFIDENCE".center(10) + " | " + "H1 TREND".center(18) + " | " + "STATUS / ACTION".ljust(50) + " |",
+                "| " + "SYMBOL".center(8) + " | " + "DECISION".center(10) + " | " + "CONFIDENCE".center(10) + " | " + "H1 TREND".center(12) + " | " + "STATUS / ACTION".ljust(48) + " |",
                 sep,
             ]
 
             for r in cycle_results:
                 sym = str(r.get("symbol", "")).ljust(8)
-                dec = str(r.get("decision", "-"))
+                dec = str(r.get("decision", "-")).center(10)
                 conf_val = r.get("confidence")
-                conf = f"{int(conf_val * 100)}%" if conf_val is not None else "-"
+                conf = f"{int(conf_val * 100)}%".center(10) if conf_val is not None else "-".center(10)
                 h1 = str(r.get("h1_trend", "-"))
                 if "BULLISH" in h1:
-                    h1_short = "BULLISH"
+                    h1_short = "BULLISH".center(12)
                 elif "BEARISH" in h1:
-                    h1_short = "BEARISH"
+                    h1_short = "BEARISH".center(12)
                 elif h1 == "-":
-                    h1_short = "-"
+                    h1_short = "-".center(12)
                 else:
-                    h1_short = "NEUTRAL"
+                    h1_short = "NEUTRAL".center(12)
 
                 status = str(r.get("status", "-"))
-                if len(status) > 50:
-                    status = status[:47] + "..."
+                if len(status) > 48:
+                    status = status[:45] + "..."
 
-                lines.append(f"| {sym} | {dec.center(10)} | {conf.center(10)} | {h1_short.center(18)} | {status.ljust(50)} |")
+                lines.append(f"| {sym} | {dec} | {conf} | {h1_short} | {status.ljust(48)} |")
 
             acc_str = f"ACCOUNT: Balance: ${balance:.2f} | Equity: ${equity:.2f} | Free Margin: ${free_margin:.2f} | Open Positions: {open_count}/{max_trades}"
             stat_str = f"SIGNALS: {buys} BUY | {sells} SELL | {waits} WAIT/CD | {active} Active | {executed} Executed | {rejected} Rejected"
 
             lines.extend([
                 sep,
-                "| " + acc_str.ljust(108) + " |",
-                "| " + stat_str.ljust(108) + " |",
+                "| " + acc_str.ljust(102) + " |",
+                "| " + stat_str.ljust(102) + " |",
+            ])
+
+            if next_close and sleep_seconds is not None:
+                next_str = f"NEXT CANDLE: Waiting for next {tf} candle close at {next_close.strftime('%H:%M:%S')} UTC ({int(sleep_seconds)}s remaining)..."
+                lines.append("| " + next_str.ljust(102) + " |")
+
+            lines.extend([
                 sep,
                 "",
             ])
@@ -454,8 +467,8 @@ class ForexAgent:
 
     # ── Dynamic Candle Monitor ───────────────────────────────────────────
 
-    async def monitor_candle_close(self):
-        """Wait until the next candle close for the configured timeframe (M1, M5, M15, M30, H1, H4, D1)."""
+    def get_next_candle_info(self) -> tuple[datetime, float]:
+        """Calculate next candle close time and remaining seconds for the configured timeframe."""
         now = datetime.now(timezone.utc)
         tf = self.timeframe.upper()
 
@@ -493,11 +506,16 @@ class ForexAgent:
             next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
         sleep_seconds = max((next_close - now).total_seconds(), 5)
-        logger.info(f"⏳ Waiting {sleep_seconds:.0f}s for next {tf} candle close at {next_close.strftime('%H:%M:%S')} UTC...")
+        return next_close, sleep_seconds
+
+    async def monitor_candle_close(self, sleep_seconds: Optional[float] = None):
+        """Wait cleanly until the next candle close without cluttering terminal output."""
+        if sleep_seconds is None:
+            _, sleep_seconds = self.get_next_candle_info()
 
         # Sleep in chunks so we can check the running flag
         while sleep_seconds > 0 and self.running:
-            chunk = min(sleep_seconds, 10)
+            chunk = min(sleep_seconds, 5)
             await asyncio.sleep(chunk)
             sleep_seconds -= chunk
 
@@ -541,22 +559,17 @@ class ForexAgent:
                     # Run any scheduled tasks (e.g., weekly model check)
                     schedule.run_pending()
 
-                    if not first_run:
-                        # Wait for candle close (M5, H1, etc.)
-                        candle_ready = await self.monitor_candle_close()
-                        if not candle_ready:
-                            break
-
-                        logger.info("═══════════════════════════════════════════════")
-                        logger.info(f"🕐 {self.timeframe.upper()} candle closed at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
-                        logger.info("═══════════════════════════════════════════════")
-                    else:
+                    if first_run:
                         first_run = False
                         logger.info("═══════════════════════════════════════════════")
                         logger.info("🚀 Executing initial market analysis cycle on startup...")
                         logger.info("═══════════════════════════════════════════════")
+                    else:
+                        logger.info("═══════════════════════════════════════════════")
+                        logger.info(f"🕐 {self.timeframe.upper()} candle closed at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                        logger.info("═══════════════════════════════════════════════")
 
-                    # Analyze each configured symbol
+                    # 1. Analyze each configured symbol
                     cycle_results = []
                     for symbol in self.symbols:
                         if not self.running:
@@ -565,13 +578,19 @@ class ForexAgent:
                         if res:
                             cycle_results.append(res)
 
-                    # Print end-of-cycle summary table for all symbols
-                    self._print_cycle_summary_table(cycle_results)
-
-                    # Check for recently closed trades and learn from losses
+                    # 2. Check for recently closed trades and learn from losses FIRST
                     await self.check_closed_trades()
 
-                    logger.info("✅ Analysis cycle complete for all symbols.\n")
+                    # 3. Calculate next candle timing
+                    next_close, sleep_seconds = self.get_next_candle_info()
+
+                    # 4. Print end-of-cycle summary table for all symbols AS THE FINAL PROMINENT BLOCK
+                    self._print_cycle_summary_table(cycle_results, next_close, sleep_seconds)
+
+                    # 5. Sleep cleanly until next candle close without cluttering terminal
+                    candle_ready = await self.monitor_candle_close(sleep_seconds)
+                    if not candle_ready:
+                        break
 
             except Exception as e:
                 logger.critical(f"💥 Critical error in main loop: {e}", exc_info=True)
