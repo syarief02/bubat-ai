@@ -74,6 +74,7 @@ class ForexAgent:
         self.timeframe = self.config.get("trading", {}).get("timeframe", "H1")
         self.confidence_threshold = self.config.get("risk_parameters", {}).get("confidence_threshold", 0.80)
         self.approval_timeout = self.config.get("risk_parameters", {}).get("approval_timeout_seconds", 300)
+        self.max_open_trades = self.config.get("risk_parameters", {}).get("max_open_trades", 10)
 
         # Symbol cooldown management to prevent revenge-trading
         self.symbol_cooldowns: dict[str, datetime] = {}
@@ -112,9 +113,21 @@ class ForexAgent:
         try:
             # 1. Skip if position is already open on this symbol
             open_positions = self.mt5_engine.get_open_positions()
-            if any(p.get("symbol") == symbol for p in open_positions):
-                logger.info(f"[{symbol}] Active position already open in MT5. Skipping cycle to prevent duplicates.")
-                return None
+            open_pos = [p for p in open_positions if p.get("symbol") == symbol]
+            if open_pos:
+                p = open_pos[0]
+                ptype = "BUY" if p.get("type") == 0 else "SELL"
+                profit = p.get("profit", 0.0)
+                profit_str = f"+${profit:.2f}" if profit >= 0 else f"-${abs(profit):.2f}"
+                logger.info(f"[{symbol}] Active position already open in MT5 ({ptype} {p.get('volume')} lot, {profit_str}). Skipping cycle.")
+                return {
+                    "symbol": symbol,
+                    "decision": ptype,
+                    "confidence": None,
+                    "sentiment": "OPEN",
+                    "h1_trend": "-",
+                    "status": f"ACTIVE #{p.get('ticket')} ({ptype} {p.get('volume')} lot, {profit_str})"
+                }
 
             # 2. Skip if symbol is in post-trade cooldown period
             now_utc = datetime.now(timezone.utc)
@@ -122,7 +135,14 @@ class ForexAgent:
                 if now_utc < self.symbol_cooldowns[symbol]:
                     remaining_mins = max(1, int((self.symbol_cooldowns[symbol] - now_utc).total_seconds() / 60))
                     logger.info(f"[{symbol}] In cooldown period ({remaining_mins}m remaining). Skipping to prevent overtrading.")
-                    return None
+                    return {
+                        "symbol": symbol,
+                        "decision": "COOLDOWN",
+                        "confidence": None,
+                        "sentiment": "WAIT",
+                        "h1_trend": "-",
+                        "status": f"COOLDOWN ({remaining_mins}m remaining)"
+                    }
                 else:
                     del self.symbol_cooldowns[symbol]
 
@@ -135,7 +155,14 @@ class ForexAgent:
             tech_data = self.mt5_engine.get_technical_data(symbol, timeframe=self.timeframe)
             if not tech_data:
                 logger.warning(f"[{symbol}] No technical data available, skipping cycle.")
-                return None
+                return {
+                    "symbol": symbol,
+                    "decision": "ERROR",
+                    "confidence": None,
+                    "sentiment": "N/A",
+                    "h1_trend": "-",
+                    "status": "ERROR (No MT5 rates)"
+                }
 
             # c. Get live news from sentiment engine
             logger.info(f"[{symbol}] Fetching live news...")
@@ -164,6 +191,8 @@ class ForexAgent:
 
             # g. If actionable signal, calculate deterministic trade parameters & propose
             trade_params = None
+            approved = False
+            result = None
             if decision.decision != "WAIT" and decision.confidence_score >= self.confidence_threshold:
                 logger.info(f"[{symbol}] Signal meets threshold. Calculating deterministic trade parameters...")
 
@@ -258,13 +287,125 @@ class ForexAgent:
             }
             await self.memory.store_episode(episode)
 
-            return decision
+            h1_trend = tech_data.get("higher_timeframe_h1", "NEUTRAL") if tech_data else "NEUTRAL"
+            status_desc = "WAIT (No action)"
+            if decision.decision == "WAIT":
+                status_desc = "WAIT (Neutral / Rangebound)"
+            elif decision.confidence_score < self.confidence_threshold:
+                status_desc = f"WAIT (Confidence {decision.confidence_score:.0%} < {self.confidence_threshold:.0%})"
+            else:
+                if trade_params and trade_params.get("status") == "error":
+                    status_desc = f"ERROR: {trade_params.get('message')}"
+                elif approved and result:
+                    if result.get("status") == "success":
+                        status_desc = f"EXECUTED #{result.get('ticket')} ({trade_params['action']} {result.get('lot')} lot)"
+                    elif result.get("status") == "rejected":
+                        status_desc = f"REJECTED: {result.get('message', 'Risk Wall')}"
+                    else:
+                        status_desc = f"FAILED: {result.get('message', 'Unknown')}"
+                else:
+                    status_desc = "REJECTED (Not approved)"
+
+            return {
+                "symbol": symbol,
+                "decision": decision.decision,
+                "confidence": decision.confidence_score,
+                "sentiment": decision.market_sentiment,
+                "h1_trend": h1_trend,
+                "status": status_desc,
+                "decision_obj": decision,
+            }
 
         except Exception as e:
             logger.error(f"[{symbol}] Error in analysis cycle: {e}", exc_info=True)
             self.supabase.log_telemetry("ForexAgent", "ANALYSIS_CYCLE_ERROR", {"symbol": symbol, "error": str(e)}, status="ERROR")
             await self.openclaw.send_alert(f"Analysis cycle error for {symbol}: {e}", level="CRITICAL")
-            return None
+            return {
+                "symbol": symbol,
+                "decision": "ERROR",
+                "confidence": None,
+                "sentiment": "ERROR",
+                "h1_trend": "-",
+                "status": f"ERROR: {str(e)[:40]}"
+            }
+
+    # ── Cycle Summary Table ───────────────────────────────────────────────
+
+    def _print_cycle_summary_table(self, cycle_results: list[dict]):
+        """Print a clean ASCII summary table of all symbols analyzed in this cycle."""
+        if not cycle_results:
+            return
+
+        try:
+            account = self.mt5_engine.get_account_info() or {}
+            balance = account.get("balance", 0.0)
+            equity = account.get("equity", 0.0)
+            free_margin = account.get("free_margin", 0.0)
+            open_positions = self.mt5_engine.get_open_positions()
+            open_count = len(open_positions)
+            max_trades = self.max_open_trades
+
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            tf = self.timeframe.upper()
+
+            buys = sum(1 for r in cycle_results if r.get("decision") == "BUY")
+            sells = sum(1 for r in cycle_results if r.get("decision") == "SELL")
+            waits = sum(1 for r in cycle_results if r.get("decision") in ("WAIT", "COOLDOWN"))
+            active = sum(1 for r in cycle_results if "ACTIVE" in r.get("status", ""))
+            executed = sum(1 for r in cycle_results if "EXECUTED" in r.get("status", ""))
+            rejected = sum(1 for r in cycle_results if "REJECTED" in r.get("status", ""))
+
+            sep = "+" + "-" * 10 + "+" + "-" * 12 + "+" + "-" * 12 + "+" + "-" * 20 + "+" + "-" * 52 + "+"
+            header_title = f"BUBAT AI - {tf} MARKET CYCLE ANALYSIS SUMMARY"
+            time_title = f"Time: {now_str}"
+
+            lines = [
+                "",
+                sep,
+                "| " + header_title.center(108) + " |",
+                "| " + time_title.center(108) + " |",
+                sep,
+                "| " + "SYMBOL".center(8) + " | " + "DECISION".center(10) + " | " + "CONFIDENCE".center(10) + " | " + "H1 TREND".center(18) + " | " + "STATUS / ACTION".ljust(50) + " |",
+                sep,
+            ]
+
+            for r in cycle_results:
+                sym = str(r.get("symbol", "")).ljust(8)
+                dec = str(r.get("decision", "-"))
+                conf_val = r.get("confidence")
+                conf = f"{int(conf_val * 100)}%" if conf_val is not None else "-"
+                h1 = str(r.get("h1_trend", "-"))
+                if "BULLISH" in h1:
+                    h1_short = "BULLISH"
+                elif "BEARISH" in h1:
+                    h1_short = "BEARISH"
+                elif h1 == "-":
+                    h1_short = "-"
+                else:
+                    h1_short = "NEUTRAL"
+
+                status = str(r.get("status", "-"))
+                if len(status) > 50:
+                    status = status[:47] + "..."
+
+                lines.append(f"| {sym} | {dec.center(10)} | {conf.center(10)} | {h1_short.center(18)} | {status.ljust(50)} |")
+
+            acc_str = f"ACCOUNT: Balance: ${balance:.2f} | Equity: ${equity:.2f} | Free Margin: ${free_margin:.2f} | Open Positions: {open_count}/{max_trades}"
+            stat_str = f"SIGNALS: {buys} BUY | {sells} SELL | {waits} WAIT/CD | {active} Active | {executed} Executed | {rejected} Rejected"
+
+            lines.extend([
+                sep,
+                "| " + acc_str.ljust(108) + " |",
+                "| " + stat_str.ljust(108) + " |",
+                sep,
+                "",
+            ])
+
+            table_output = "\n".join(lines)
+            sys.stderr.write(table_output + "\n")
+            sys.stderr.flush()
+        except Exception as e:
+            logger.error(f"Error generating cycle summary table: {e}")
 
     # ── Reflexion: Learn from Closed Trades ───────────────────────────────
 
@@ -416,10 +557,16 @@ class ForexAgent:
                         logger.info("═══════════════════════════════════════════════")
 
                     # Analyze each configured symbol
+                    cycle_results = []
                     for symbol in self.symbols:
                         if not self.running:
                             break
-                        await self.run_analysis_cycle(symbol)
+                        res = await self.run_analysis_cycle(symbol)
+                        if res:
+                            cycle_results.append(res)
+
+                    # Print end-of-cycle summary table for all symbols
+                    self._print_cycle_summary_table(cycle_results)
 
                     # Check for recently closed trades and learn from losses
                     await self.check_closed_trades()
