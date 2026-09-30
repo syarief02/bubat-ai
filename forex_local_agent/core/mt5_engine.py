@@ -40,6 +40,8 @@ class MT5Engine:
 
         # Risk parameters
         risk = self.config.get("risk_parameters", {})
+        self.lot_mode = risk.get("lot_mode", "fixed")
+        self.fixed_lot = risk.get("fixed_lot", 0.01)
         self.max_lot_size = risk.get("max_lot_size", 0.1)
         self.max_drawdown_pct = risk.get("max_drawdown_pct", 2.0)
         self.max_open_trades = risk.get("max_open_trades", 10)
@@ -47,6 +49,8 @@ class MT5Engine:
         self.atr_period = risk.get("atr_period", 14)
         self.atr_multiplier_sl = risk.get("atr_multiplier_sl", 1.5)
         self.atr_multiplier_tp = risk.get("atr_multiplier_tp", 3.0)
+        self.min_sl_pips = risk.get("min_sl_pips", 15.0)
+        self.max_spread_pips = risk.get("max_spread_pips", 3.5)
 
         # Trading settings
         trading = self.config.get("trading", {})
@@ -206,12 +210,41 @@ class MT5Engine:
             record["low"] = float(record["low"])
             record["close"] = float(record["close"])
 
+        # Multi-timeframe trend context: Higher Timeframe (H1) Bias
+        htf_trend = "NEUTRAL"
+        if timeframe != "H1":
+            try:
+                h1_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 60)
+                if h1_rates is not None and len(h1_rates) >= 50:
+                    h1_df = pd.DataFrame(h1_rates)
+                    h1_df.ta.ema(length=20, append=True)
+                    h1_df.ta.ema(length=50, append=True)
+                    h1_last = h1_df.iloc[-1]
+                    h1_close = float(h1_last["close"])
+                    h1_cols20 = [c for c in h1_df.columns if c.startswith("EMA_20")]
+                    h1_cols50 = [c for c in h1_df.columns if c.startswith("EMA_50")]
+                    if h1_cols20 and h1_cols50:
+                        h1_e20 = to_float(h1_last[h1_cols20[0]])
+                        h1_e50 = to_float(h1_last[h1_cols50[0]])
+                        if h1_e20 and h1_e50:
+                            if h1_close > h1_e20 and h1_e20 > h1_e50:
+                                htf_trend = "BULLISH (H1 Uptrend above 20 & 50 EMA)"
+                            elif h1_close < h1_e20 and h1_e20 < h1_e50:
+                                htf_trend = "BEARISH (H1 Downtrend below 20 & 50 EMA)"
+                            elif h1_close > h1_e20:
+                                htf_trend = "BULLISH BIAS (Above H1 20 EMA)"
+                            elif h1_close < h1_e20:
+                                htf_trend = "BEARISH BIAS (Below H1 20 EMA)"
+            except Exception as e:
+                logger.debug(f"[{symbol}] Could not fetch H1 HTF trend: {e}")
+
         return {
             "symbol": symbol,
             "timeframe": timeframe,
             "current_price": close_price,
             "trend_structure": trend_structure,
             "technical_bias": bias,
+            "higher_timeframe_h1": htf_trend,
             "rsi": round(rsi_val, 1) if rsi_val is not None else None,
             "rsi_condition": rsi_condition,
             "macd": round(macd_val, 6) if macd_val is not None else None,
@@ -250,9 +283,28 @@ class MT5Engine:
 
         point = symbol_info.point
         digits = symbol_info.digits
+        pip_size = point * 10 if digits in (3, 5) else point
 
         sl_distance = atr_value * self.atr_multiplier_sl
         tp_distance = atr_value * self.atr_multiplier_tp
+
+        # Enforce minimum Stop Loss floor so broker spread and noise don't immediately wipe trades out
+        min_sl_dist = self.min_sl_pips * pip_size if symbol != "XAUUSD" else 3.50
+        if sl_distance < min_sl_dist:
+            logger.info(f"[{symbol}] ATR SL distance ({sl_distance:.5f}) below minimum floor ({min_sl_dist:.5f}). Widening SL to protect against spread noise.")
+            sl_distance = min_sl_dist
+            tp_distance = max(tp_distance, sl_distance * 1.5)
+
+        # Check broker minimum stops level
+        stops_level_points = symbol_info.trade_stops_level
+        min_stop_distance = stops_level_points * point
+
+        if min_stop_distance > 0 and sl_distance < min_stop_distance:
+            logger.warning(f"ATR SL distance ({sl_distance}) is below broker min stop level ({min_stop_distance}). Widening SL.")
+            sl_distance = min_stop_distance
+
+        if min_stop_distance > 0 and tp_distance < min_stop_distance:
+            tp_distance = min_stop_distance
 
         if decision.upper() == "BUY":
             entry_price = float(tick.ask)
@@ -267,26 +319,7 @@ class MT5Engine:
         else:
             return {"status": "error", "message": f"Invalid decision: {decision}"}
 
-        # Check broker minimum stops level
-        stops_level_points = symbol_info.trade_stops_level
-        min_stop_distance = stops_level_points * point
-
-        if min_stop_distance > 0 and sl_distance < min_stop_distance:
-            logger.warning(f"ATR SL distance ({sl_distance}) is below broker min stop level ({min_stop_distance}). Widening SL.")
-            sl_distance = min_stop_distance
-            if decision.upper() == "BUY":
-                sl_price = round(entry_price - sl_distance, digits)
-            else:
-                sl_price = round(entry_price + sl_distance, digits)
-
-        if min_stop_distance > 0 and tp_distance < min_stop_distance:
-            tp_distance = min_stop_distance
-            if decision.upper() == "BUY":
-                tp_price = round(entry_price + tp_distance, digits)
-            else:
-                tp_price = round(entry_price - tp_distance, digits)
-
-        # Dynamic lot sizing
+        # Lot sizing: Fixed or Dynamic Risk
         account = self.get_account_info()
         if not account:
             return {"status": "error", "message": "Failed to get account info"}
@@ -303,19 +336,20 @@ class MT5Engine:
         sl_distance_ticks = sl_distance / tick_size
         loss_per_lot = sl_distance_ticks * tick_value
 
-        if loss_per_lot <= 0:
-            return {"status": "error", "message": "Invalid loss calculation per lot"}
-
-        raw_lot = risk_amount / loss_per_lot
-
         vol_min = symbol_info.volume_min
         vol_max = symbol_info.volume_max
         vol_step = symbol_info.volume_step
 
-        if vol_step > 0:
-            raw_lot = math.floor(raw_lot / vol_step) * vol_step
+        if self.lot_mode == "fixed":
+            final_lot = max(vol_min, min(self.fixed_lot, vol_max, self.max_lot_size))
+        else:
+            if loss_per_lot <= 0:
+                return {"status": "error", "message": "Invalid loss calculation per lot"}
+            raw_lot = risk_amount / loss_per_lot
+            if vol_step > 0:
+                raw_lot = math.floor(raw_lot / vol_step) * vol_step
+            final_lot = max(vol_min, min(raw_lot, vol_max, self.max_lot_size))
 
-        final_lot = max(vol_min, min(raw_lot, vol_max, self.max_lot_size))
         final_lot = round(final_lot, 2)
 
         return {
@@ -351,6 +385,12 @@ class MT5Engine:
             logger.warning(msg)
             return {"status": "rejected", "message": msg}
 
+        # Prevent duplicate / stacking positions on the same pair
+        if any(p.get("symbol") == symbol for p in open_positions):
+            msg = f"REJECTED: Position already open for {symbol}. One active position per pair enforced."
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
+
         account = self.get_account_info()
         if not account:
             return {"status": "error", "message": "Could not get account info"}
@@ -367,6 +407,17 @@ class MT5Engine:
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             return {"status": "error", "message": f"Failed to get live tick for {symbol}"}
+
+        # Broker Spread Protection Wall
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info:
+            point = symbol_info.point
+            pip_size = point * 10 if symbol_info.digits in (3, 5) else point
+            spread_pips = (tick.ask - tick.bid) / pip_size
+            if spread_pips > self.max_spread_pips:
+                msg = f"REJECTED: Spread on {symbol} is {spread_pips:.1f} pips (exceeds max allowed {self.max_spread_pips} pips)"
+                logger.warning(msg)
+                return {"status": "rejected", "message": msg}
 
         live_price = float(tick.ask if action == "BUY" else tick.bid)
 

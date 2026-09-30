@@ -75,6 +75,10 @@ class ForexAgent:
         self.confidence_threshold = self.config.get("risk_parameters", {}).get("confidence_threshold", 0.80)
         self.approval_timeout = self.config.get("risk_parameters", {}).get("approval_timeout_seconds", 300)
 
+        # Symbol cooldown management to prevent revenge-trading
+        self.symbol_cooldowns: dict[str, datetime] = {}
+        self.cooldown_minutes = self.config.get("risk_parameters", {}).get("symbol_cooldown_minutes", 30)
+
         # Register signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -105,6 +109,22 @@ class ForexAgent:
         """
         logger.info(f"═══ Starting analysis cycle for {symbol} ═══")
         try:
+            # 1. Skip if position is already open on this symbol
+            open_positions = self.mt5_engine.get_open_positions()
+            if any(p.get("symbol") == symbol for p in open_positions):
+                logger.info(f"[{symbol}] Active position already open in MT5. Skipping cycle to prevent duplicates.")
+                return None
+
+            # 2. Skip if symbol is in post-trade cooldown period
+            now_utc = datetime.now(timezone.utc)
+            if symbol in self.symbol_cooldowns:
+                if now_utc < self.symbol_cooldowns[symbol]:
+                    remaining_mins = max(1, int((self.symbol_cooldowns[symbol] - now_utc).total_seconds() / 60))
+                    logger.info(f"[{symbol}] In cooldown period ({remaining_mins}m remaining). Skipping to prevent overtrading.")
+                    return None
+                else:
+                    del self.symbol_cooldowns[symbol]
+
             # a. Load learned rules
             rules_path = Path("learning/learned_rules.md")
             learned_rules = rules_path.read_text(encoding="utf-8") if rules_path.exists() else ""
@@ -254,6 +274,11 @@ class ForexAgent:
             closed_trades = self.mt5_engine.check_closed_trades(since)
 
             for trade in closed_trades:
+                sym = trade.get("symbol")
+                if sym:
+                    self.symbol_cooldowns[sym] = datetime.now(timezone.utc) + timedelta(minutes=self.cooldown_minutes)
+                    logger.info(f"[{sym}] Placed on {self.cooldown_minutes}m post-trade cooldown.")
+
                 profit = trade.get("profit", 0)
                 if profit < 0:
                     logger.info(f"Loss detected on trade {trade.get('ticket')}, triggering reflexion...")

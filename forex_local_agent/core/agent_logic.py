@@ -80,7 +80,12 @@ class AgentLogic:
             "4. DECISION DIRECTION:\n"
             "   - Downtrend below 20 & 50 EMA with bearish momentum -> SELL.\n"
             "   - Uptrend above 20 & 50 EMA with bullish momentum -> BUY.\n"
-            "   - Conflicting or sideways -> WAIT.\n\n"
+            "   - Conflicting or sideways -> WAIT.\n"
+            "5. MULTI-TIMEFRAME CONFIRMATION (CRITICAL TO AVOID LOSSES):\n"
+            "   - Inspect 'higher_timeframe_h1' in the Technical Analysis.\n"
+            "   - Never BUY if H1 is BEARISH (avoid buying into a dominant downtrend).\n"
+            "   - Never SELL if H1 is BULLISH (avoid selling into a dominant uptrend).\n"
+            "   - If M5 and H1 are in direct conflict, output WAIT with NEUTRAL sentiment.\n\n"
             "YOUR OUTPUT FORMAT (Valid JSON only):\n"
             "{\n"
             '  "market_sentiment": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
