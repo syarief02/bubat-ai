@@ -406,3 +406,53 @@ RULE #202609300721 [USDJPY]: Implement a more stringent entry price check before
 RULE #202609300721 [EURUSD]: In the future, it may be beneficial to set a higher stop loss level to reduce the potential loss of the trade.
   Root cause: The trade was executed at a price of 1.13303, which resulted in a loss of 1.83 units.
   Lesson: It is important to carefully consider the price at which a trade is executed and to be aware of potential risks associated with the trade.
+
+
+RULE #202609300734 [EURAUD]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202609300734 [GBPAUD]: Implement a volume-based stop-loss strategy to ensure that orders are executed at the right time.
+  Root cause: Insufficient volume to execute order
+  Lesson: Always ensure sufficient volume to execute orders to avoid slippage and losses.
+
+
+RULE #202609300734 [USDJPY]: Implement a stop-loss order to protect your position.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor the market and adjust your orders accordingly.
+
+
+RULE #202609300734 [EURUSD]: Increase leverage to manage risk
+  Root cause: Insufficient leverage for the position
+  Lesson: Always ensure you have sufficient leverage to manage your trades effectively
+
+
+RULE #202609300901 [GBPCHF]: Implement a volume check before placing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202609300921 [NZDCHF]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade
+
+
+RULE #202609301011 [XAUUSD]: Implement a more sophisticated risk management system to prevent losses.
+  Root cause: The trade was executed at a higher price than expected, resulting in a loss.
+  Lesson: It's crucial to closely monitor market trends and adjust your trading strategy accordingly.
+
+
+RULE #202609301011 [XAUUSD]: The trader should consider implementing a stop-loss order at a level that is slightly above the entry price to protect their position. This will help to limit the potential loss and ensure that the trader does not lose more than they can afford to lose.
+  Root cause: The trade was executed at a price of 4197.08, which was below the entry price of 4200.00. The profit was calculated as -18.16, which is a significant loss for the trader.
+  Lesson: It is important to carefully consider the entry price when trading, especially in volatile markets. The trader should also be aware of the potential for losses and take appropriate measures to mitigate them.
+
+
+RULE #202609301016 [EURJPY]: Implement a stop-loss order to protect your position.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your orders accordingly.
+
+
+RULE #202609301825 [XAUUSD]: Do not initiate counter-trend SELL trades on XAUUSD when H1 Higher Timeframe trend is BULLISH (Price > 20 EMA and 20 EMA > 50 EMA).
+  Root cause: Counter-trend short entries on XAUUSD during a macro parabolic bull run caused -$51.72 in outlier drawdown (36% of daily losses).
+  Lesson: High-beta commodities cannot be mean-reverted on M5 against higher timeframe momentum; trend alignment must be strictly non-negotiable, and minimum commodity SL must reflect $3.50 (350 points) volatility cushion.
