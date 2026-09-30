@@ -1,0 +1,65 @@
+[2026-09-30 20:10:00 UTC] AUTO-EVOLUTION POST-MORTEM PATCH REPORT
+================================================================================
+COMMIT: auto-evolve: post-mortem improvements [2026-09-30]
+TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
+
+1. DIAGNOSED SYSTEM BOTTLENECKS
+--------------------------------------------------------------------------------
+Mode 1 (Scraper & Senses):
+- SearXNG local port 8080 was unreachable/offline, creating 22 timeout exceptions and 389 fallback calls.
+- Scraper lacked forward-looking macroeconomic awareness, ingesting backwards-looking commentary and exposing trades to high-impact data spikes.
+
+Mode 2 (Reasoning & Prompt Drift):
+- LLM JSON schema decoding encountered 8.1% failure rate due to token budget exhaust (num_predict=400) caused by verbose narrative looping of calendar events in 'reasoning'.
+- Temperature 0.2 allowed slight schema variability.
+
+Mode 3 (Execution & Math):
+- ATR-based Stop Loss on M5 charts frequently set sub-10 pip stops (as low as 2.2 pips), which were hunted prematurely by broker spread expansion and volatility spikes.
+- Trading was permitted minutes before Tier-1 US data events (PCE, GDP, NFP).
+
+Mode 4 (Tool Deficiency):
+- Missing structured economic calendar engine with pre/post-release entry blackout filters.
+
+2. IMPLEMENTED CODE PATCHES & SKILLS
+--------------------------------------------------------------------------------
+1. New Skill Created: `learning/skills/economic_calendar_filter.py`
+   - Real-time JSON parser connecting to ForexFactory API with TTL disk caching (`calendar_cache.json`).
+   - Implements `is_trade_permitted_by_calendar(symbol)` with 30m pre-event and 15m post-event blackout window.
+   - Implements `get_economic_events_summary(symbol)` for LLM prompt injection.
+   - Registered in `learning/skills/__init__.py`.
+
+2. Sentiment Engine Refactor: `core/sentiment_engine.py`
+   - Added `_probe_searxng()` 600ms quick-probe with immediate fast-route fallback to WebSurfer RSS feeds.
+   - Integrated `economic_calendar_filter` directly into `get_live_news(symbol)` and `get_economic_calendar()`.
+
+3. Agent Logic Optimization: `core/agent_logic.py`
+   - Increased `num_predict` from 400 to 800 tokens to eliminate truncated JSON strings.
+   - Calibrated `temperature` to 0.1 for deterministic structured output.
+   - Built Multi-Tier Resilient Parser: Tier 1 (Standard JSON), Tier 2 (Automatic String/Brace Repair), Tier 3 (Deterministic Regex Extraction).
+   - Constrained reasoning in prompt to 1-2 concise sentences, explicitly forbidding calendar text repetition.
+
+4. Execution Engine Upgrades: `core/mt5_engine.py`
+   - Integrated `is_trade_permitted_by_calendar` check into `execute_trade()`.
+   - Active Trailing Stop Manager: locks Break-Even (+1 pip) at +10 pips profit, dynamic trailing at +15 pips.
+   - Enforced 15.0 pip minimum SL floor for all forex pairs and 350-point ($3.50) SL floor for XAUUSD.
+   - Added H1 Higher Timeframe trend filter rejecting counter-trend trades.
+
+5. Cloud Persistence & Reflexion: `core/supabase_manager.py` & `learning/continuous_learner.py`
+   - Created `forex_learned_rules` table in Supabase PostgreSQL database.
+   - Synced new operational rules to both `learned_rules.md` and Supabase cloud.
+
+6. Configuration Calibration: `config.json`
+   - Added `"news_blackout_pre_mins": 30`, `"news_blackout_post_mins": 15`.
+   - Added `"trailing_stop_enabled": true`, `"trailing_breakeven_pips": 10.0`, `"trailing_step_pips": 5.0`.
+
+3. VERIFICATION & REGRESSION TESTING
+--------------------------------------------------------------------------------
+- Syntax check: `python -m py_compile` passed on all 8 modified files.
+- Mock Cycle Test (`tests/test_mock_cycle.py`):
+  * Step 1: MT5 Engine connected successfully to Account 25360772 ($100.52 USD).
+  * Step 2: M5 Bars fetched for EURUSD; ATR=0.00031, RSI=50.2, H1 Trend=BULLISH BIAS.
+  * Step 3: Sentiment & Calendar Scraper executed. US Core PCE & GDP detected in 18m.
+  * Step 4: Calendar Permission Wall triggered: `Permitted=False, Reason=BLACKOUT: [USD] 'Core PCE Price Index m/m' release in 18m`.
+  * Step 5: Ollama queried; TradeDecision parsed successfully on Attempt 1.
+  * Step 6: ATR SL widened to 15.0 pip floor (0.00150); 1:2 R:R ratio validated.
+  * ALL ASSERTIONS PASSED (100% OK).

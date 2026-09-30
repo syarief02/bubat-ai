@@ -126,6 +126,27 @@ class SupabaseManager:
         }
         return self._insert_record("ai_agent_telemetry", data)
 
+    def log_learned_rule(
+        self,
+        rule_id: str,
+        category: str,
+        directive: str,
+        source: str = "auto_reflexion",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        Log a newly learned operational rule into forex_learned_rules table in Supabase.
+        """
+        data = {
+            "rule_id": rule_id,
+            "category": category,
+            "directive": directive,
+            "source": source,
+            "metadata": metadata or {},
+            "active": True,
+        }
+        return self._insert_record("forex_learned_rules", data)
+
     def _insert_record(self, table: str, data: Dict[str, Any]) -> Optional[str]:
         """Insert a record via PostgREST client or direct psycopg2 fallback."""
         # 1. Try Supabase PostgREST client

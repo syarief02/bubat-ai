@@ -28,6 +28,15 @@ except ImportError:
     except ImportError:
         WebSurfer = None
 
+try:
+    from learning.skills.economic_calendar_filter import get_economic_events_summary, calendar_filter
+except ImportError:
+    try:
+        from forex_local_agent.learning.skills.economic_calendar_filter import get_economic_events_summary, calendar_filter
+    except ImportError:
+        get_economic_events_summary = None
+        calendar_filter = None
+
 
 class SentimentEngine:
     def __init__(self, config_path: str | Path):
@@ -296,23 +305,55 @@ class SentimentEngine:
         parts = await asyncio.gather(*[_fetch_item_text(it) for it in news_items])
         combined_text = "\n\n".join(parts)
         truncated_text = self._truncate_to_tokens(combined_text, self.max_news_tokens)
+
+        # Inject real-time macroeconomic calendar events summary if available
+        cal_summary = ""
+        if get_economic_events_summary:
+            try:
+                cal_summary = get_economic_events_summary(symbol)
+                if cal_summary:
+                    truncated_text = f"=== MACROECONOMIC CALENDAR FOR {symbol} ===\n{cal_summary}\n\n=== LIVE NEWS ARTICLES ===\n{truncated_text}"
+            except Exception as e:
+                logger.debug(f"Could not fetch calendar summary for {symbol}: {e}")
         
         return {
             "symbol": symbol,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "news_count": len(news_items),
             "headlines": headlines,
-            "full_text": truncated_text
+            "full_text": truncated_text,
+            "economic_calendar_summary": cal_summary
         }
 
     async def get_economic_calendar(self) -> List[Dict[str, Any]]:
         """
         Get today's economic calendar events.
+        Prioritizes the live ForexFactory calendar feed.
         
         Returns:
             List of dictionaries containing event details.
         """
         logger.info("Fetching today's economic calendar...")
+
+        if calendar_filter:
+            try:
+                raw_events = calendar_filter.refresh_calendar()
+                if raw_events:
+                    formatted_events = []
+                    for ev in raw_events[:20]:
+                        formatted_events.append({
+                            "time": ev.get("time_utc", datetime.now(timezone.utc).isoformat()),
+                            "event": ev.get("title", "Economic Event"),
+                            "currency": ev.get("currency", "USD"),
+                            "impact": ev.get("impact", "Medium"),
+                            "forecast": ev.get("forecast", ""),
+                            "previous": ev.get("previous", ""),
+                            "source_url": "ForexFactory Live Feed"
+                        })
+                    logger.info(f"Loaded {len(formatted_events)} events from ForexFactory calendar feed.")
+                    return formatted_events
+            except Exception as e:
+                logger.warning(f"ForexFactory calendar parse failed: {e}. Falling back...")
         
         if self.searxng_available is None:
             await self._probe_searxng()

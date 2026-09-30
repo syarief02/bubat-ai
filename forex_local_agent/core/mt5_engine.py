@@ -17,6 +17,14 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from loguru import logger
 
+try:
+    from learning.skills.economic_calendar_filter import is_trade_permitted_by_calendar
+except ImportError:
+    try:
+        from forex_local_agent.learning.skills.economic_calendar_filter import is_trade_permitted_by_calendar
+    except ImportError:
+        is_trade_permitted_by_calendar = None
+
 
 class MT5Engine:
     def __init__(self, config_path: str):
@@ -50,12 +58,6 @@ class MT5Engine:
         self.atr_multiplier_sl = risk.get("atr_multiplier_sl", 1.5)
         self.atr_multiplier_tp = risk.get("atr_multiplier_tp", 3.0)
         self.min_sl_pips = risk.get("min_sl_pips", 15.0)
-        self.cross_pair_min_sl_pips = risk.get("cross_pair_min_sl_pips", 22.0)
-        self.breakeven_trigger_pips = risk.get("breakeven_trigger_pips", 10.0)
-        self.breakeven_lock_pips = risk.get("breakeven_lock_pips", 1.0)
-        self.trailing_start_pips = risk.get("trailing_start_pips", 15.0)
-        self.trailing_distance_pips = risk.get("trailing_distance_pips", 10.0)
-        self.min_account_balance_gold = risk.get("min_account_balance_gold", 300.0)
         self.max_spread_pips = risk.get("max_spread_pips", 3.5)
 
         # Trading settings
@@ -294,15 +296,8 @@ class MT5Engine:
         sl_distance = atr_value * self.atr_multiplier_sl
         tp_distance = atr_value * self.atr_multiplier_tp
 
-        # Enforce asset-class aware minimum Stop Loss floor so broker spread and noise don't immediately wipe trades out
-        is_cross_pair = any(x in symbol for x in ["AUD", "NZD", "CAD", "CHF"]) and not any(symbol.startswith(m) or symbol.endswith(m) for m in ["USD"])
-        if symbol == "XAUUSD":
-            min_sl_dist = 4.50  # $4.50 price distance (450 points)
-        elif is_cross_pair:
-            min_sl_dist = self.cross_pair_min_sl_pips * pip_size
-        else:
-            min_sl_dist = self.min_sl_pips * pip_size
-
+        # Enforce minimum Stop Loss floor so broker spread and noise don't immediately wipe trades out
+        min_sl_dist = self.min_sl_pips * pip_size if symbol != "XAUUSD" else 3.50
         if sl_distance < min_sl_dist:
             logger.info(f"[{symbol}] ATR SL distance ({sl_distance:.5f}) below minimum floor ({min_sl_dist:.5f}). Widening SL to protect against spread noise.")
             sl_distance = min_sl_dist
@@ -379,7 +374,6 @@ class MT5Engine:
             "tp_distance": round(tp_distance, digits),
             "risk_amount": round(risk_amount, 2),
             "risk_reward_ratio": round(self.atr_multiplier_tp / self.atr_multiplier_sl, 2),
-            "h1_trend": tech_data.get("higher_timeframe_h1", "NEUTRAL"),
         }
 
     def execute_trade(self, trade_params: Dict) -> Dict:
@@ -393,17 +387,6 @@ class MT5Engine:
 
         logger.info(f"[EXECUTION] Executing {action} {symbol} lot={final_lot} entry={entry_price} sl={sl} tp={tp}")
 
-        # 1. Multi-Timeframe (H1) Trend Confirmation Wall: Strictly block counter-trend entries
-        h1_trend = trade_params.get("h1_trend", "NEUTRAL")
-        if "BULLISH" in h1_trend and action == "SELL":
-            msg = f"REJECTED: Counter-trend SELL blocked on {symbol}. H1 trend is BULLISH."
-            logger.warning(msg)
-            return {"status": "rejected", "message": msg}
-        elif "BEARISH" in h1_trend and action == "BUY":
-            msg = f"REJECTED: Counter-trend BUY blocked on {symbol}. H1 trend is BEARISH."
-            logger.warning(msg)
-            return {"status": "rejected", "message": msg}
-
         open_positions = self.get_open_positions()
         if len(open_positions) >= self.max_open_trades:
             msg = f"REJECTED: Max open trades ({self.max_open_trades}) reached"
@@ -416,17 +399,24 @@ class MT5Engine:
             logger.warning(msg)
             return {"status": "rejected", "message": msg}
 
+        # Economic Calendar High-Impact News Blackout Check
+        if is_trade_permitted_by_calendar:
+            try:
+                pre_buffer = self.config.get("risk_parameters", {}).get("news_blackout_pre_mins", 30)
+                post_buffer = self.config.get("risk_parameters", {}).get("news_blackout_post_mins", 15)
+                permitted, reason = is_trade_permitted_by_calendar(symbol, pre_buffer_mins=pre_buffer, post_buffer_mins=post_buffer)
+                if not permitted:
+                    msg = f"REJECTED: News blackout active for {symbol} ({reason})"
+                    logger.warning(msg)
+                    return {"status": "rejected", "message": msg}
+            except Exception as e:
+                logger.debug(f"Calendar check exception: {e}")
+
         account = self.get_account_info()
         if not account:
             return {"status": "error", "message": "Could not get account info"}
 
         balance = account.get("balance", 0)
-
-        # 2. Commodity Account Balance Guard: Protect small accounts from XAUUSD volatility
-        if symbol == "XAUUSD" and balance < self.min_account_balance_gold:
-            msg = f"REJECTED: Account balance (${balance:.2f}) below minimum ${self.min_account_balance_gold:.0f} threshold for high-beta XAUUSD."
-            logger.warning(msg)
-            return {"status": "rejected", "message": msg}
         risk_amount = trade_params.get("risk_amount", 0)
         max_allowed_risk = balance * (self.max_drawdown_pct / 100.0)
 
@@ -508,123 +498,4 @@ class MT5Engine:
         if deals is None:
             return []
         return [d._asdict() for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
-
-    def manage_trailing_stops(self) -> List[Dict]:
-        """
-        Actively manage all open positions in MT5:
-        1. Break-Even Protection: When profit >= breakeven_trigger_pips (default 10 pips),
-           automatically move Stop Loss to entry price + breakeven_lock_pips (1 pip) to guarantee a risk-free trade.
-        2. Trailing Stop: When profit >= trailing_start_pips (default 15 pips),
-           trail Stop Loss behind live price by trailing_distance_pips (default 10 pips).
-        Returns a list of modification event dicts.
-        """
-        modifications = []
-        open_positions = self.get_open_positions()
-        if not open_positions:
-            return modifications
-
-        for p in open_positions:
-            try:
-                ticket = p.get("ticket")
-                symbol = p.get("symbol")
-                ptype = p.get("type")  # 0 = BUY, 1 = SELL
-                open_price = float(p.get("price_open", 0.0))
-                current_price = float(p.get("price_current", 0.0))
-                current_sl = float(p.get("sl", 0.0))
-                current_tp = float(p.get("tp", 0.0))
-
-                symbol_info = mt5.symbol_info(symbol)
-                if not symbol_info:
-                    continue
-
-                point = symbol_info.point
-                digits = symbol_info.digits
-                pip_size = point * 10 if digits in (3, 5) else point
-
-                if symbol == "XAUUSD":
-                    floating_pips = (current_price - open_price) if ptype == 0 else (open_price - current_price)
-                    be_trigger = 2.50  # $2.50 on Gold
-                    be_lock = 0.50
-                    trail_start = 4.00
-                    trail_dist = 2.50
-                    step_size = 0.50
-                else:
-                    floating_pips = (current_price - open_price) / pip_size if ptype == 0 else (open_price - current_price) / pip_size
-                    be_trigger = self.breakeven_trigger_pips
-                    be_lock = self.breakeven_lock_pips * pip_size
-                    trail_start = self.trailing_start_pips
-                    trail_dist = self.trailing_distance_pips * pip_size
-                    step_size = 2.0 * pip_size
-
-                new_sl = None
-                action_name = None
-
-                if ptype == 0:  # BUY
-                    # 1. Break-Even Check
-                    if floating_pips >= be_trigger:
-                        lock_price = round(open_price + be_lock, digits)
-                        if current_sl < lock_price:
-                            new_sl = lock_price
-                            action_name = "BREAK_EVEN"
-
-                    # 2. Trailing Stop Check
-                    if floating_pips >= trail_start:
-                        candidate_sl = round(current_price - trail_dist, digits)
-                        if new_sl is None and candidate_sl > current_sl + step_size:
-                            new_sl = candidate_sl
-                            action_name = "TRAILING_STOP"
-                        elif new_sl is not None and candidate_sl > new_sl:
-                            new_sl = candidate_sl
-                            action_name = "TRAILING_STOP"
-
-                elif ptype == 1:  # SELL
-                    # 1. Break-Even Check
-                    if floating_pips >= be_trigger:
-                        lock_price = round(open_price - be_lock, digits)
-                        if current_sl == 0 or current_sl > lock_price:
-                            new_sl = lock_price
-                            action_name = "BREAK_EVEN"
-
-                    # 2. Trailing Stop Check
-                    if floating_pips >= trail_start:
-                        candidate_sl = round(current_price + trail_dist, digits)
-                        if new_sl is None and (current_sl == 0 or candidate_sl < current_sl - step_size):
-                            new_sl = candidate_sl
-                            action_name = "TRAILING_STOP"
-                        elif new_sl is not None and candidate_sl < new_sl:
-                            new_sl = candidate_sl
-                            action_name = "TRAILING_STOP"
-
-                # If an update is warranted and meets broker limits
-                if new_sl is not None and new_sl != current_sl:
-                    stops_level = symbol_info.trade_stops_level * point
-                    dist_to_price = abs(current_price - new_sl)
-                    if dist_to_price >= stops_level:
-                        request = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "position": ticket,
-                            "symbol": symbol,
-                            "sl": new_sl,
-                            "tp": current_tp,
-                        }
-                        result = mt5.order_send(request)
-                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                            logger.info(f"[{symbol}] {action_name} APPLIED #{ticket}: SL moved {current_sl} -> {new_sl} (+{floating_pips:.1f} pips profit)")
-                            modifications.append({
-                                "ticket": ticket,
-                                "symbol": symbol,
-                                "action": action_name,
-                                "old_sl": current_sl,
-                                "new_sl": new_sl,
-                                "floating_pips": round(floating_pips, 1),
-                            })
-                        else:
-                            retcode = result.retcode if result else "None"
-                            logger.warning(f"[{symbol}] Failed to apply {action_name} on #{ticket}: retcode {retcode}")
-
-            except Exception as e:
-                logger.error(f"Error managing position #{p.get('ticket')}: {e}")
-
-        return modifications
-
 

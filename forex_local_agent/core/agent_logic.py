@@ -90,13 +90,16 @@ class AgentLogic:
             "   - Inspect 'higher_timeframe_h1' in the Technical Analysis.\n"
             "   - Never BUY if H1 is BEARISH (avoid buying into a dominant downtrend).\n"
             "   - Never SELL if H1 is BULLISH (avoid selling into a dominant uptrend).\n"
-            "   - If M5 and H1 are in direct conflict, output WAIT with NEUTRAL sentiment.\n\n"
+            "   - If M5 and H1 are in direct conflict, output WAIT with NEUTRAL sentiment.\n"
+            "6. HIGH-IMPACT MACROECONOMIC NEWS DISCIPLINE:\n"
+            "   - If an upcoming High-Impact news release (CPI, NFP, FOMC / Central Bank Rates, GDP) is scheduled within 30 minutes, you MUST output WAIT with NEUTRAL sentiment.\n"
+            "   - Never gamble through high-impact economic releases.\n\n"
             "YOUR OUTPUT FORMAT (Valid JSON only):\n"
             "{\n"
             '  "market_sentiment": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
             '  "decision": "BUY" | "SELL" | "WAIT",\n'
             '  "confidence_score": <float between 0.30 and 0.90>,\n'
-            '  "reasoning": "<concise explanation citing specific technical signals and actual news>"\n'
+            '  "reasoning": "<1-2 concise sentences maximum explaining technical momentum and catalyst. Do not repeat calendar tables or list events>"\n'
             "}\n\n"
         )
 
@@ -119,6 +122,60 @@ class AgentLogic:
             return text[start_idx : end_idx + 1]
         return text
 
+    def _parse_or_recover_trade_decision(self, raw_text: str) -> Optional[TradeDecision]:
+        """Multi-tier resilient parser: Standard JSON -> Auto-Repair -> Regex extraction."""
+        # Tier 1: Standard JSON parse
+        json_str = self._extract_json(raw_text)
+        try:
+            data = json.loads(json_str)
+            return TradeDecision(**data)
+        except Exception:
+            pass
+
+        # Tier 2: Auto-repair unclosed reasoning string and braces
+        try:
+            cleaned = json_str.strip()
+            if '"reasoning":' in cleaned:
+                idx = cleaned.find('"reasoning":')
+                q_start = cleaned.find('"', idx + 12)
+                if q_start != -1:
+                    content_after = cleaned[q_start + 1:]
+                    # If no closing quote or unclosed brace
+                    if not content_after.endswith('"}') and not content_after.endswith('"\n}'):
+                        # Truncate at last space and close JSON
+                        last_space = content_after.rfind(' ')
+                        salvaged = content_after[:last_space] if last_space != -1 else content_after[:150]
+                        salvaged = salvaged.replace('"', "'")
+                        repaired = f'{cleaned[:q_start + 1]}{salvaged}"}}'
+                        data = json.loads(repaired)
+                        return TradeDecision(**data)
+        except Exception:
+            pass
+
+        # Tier 3: Deterministic Regex Fallback Extraction
+        try:
+            sent_m = re.search(r'"market_sentiment"\s*:\s*"([A-Z]+)"', raw_text, re.I)
+            dec_m = re.search(r'"decision"\s*:\s*"([A-Z]+)"', raw_text, re.I)
+            conf_m = re.search(r'"confidence_score"\s*:\s*([0-9.]+)', raw_text)
+            reas_m = re.search(r'"reasoning"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', raw_text)
+
+            if sent_m and dec_m and conf_m:
+                sentiment = sent_m.group(1).upper()
+                decision = dec_m.group(1).upper()
+                confidence = float(conf_m.group(1))
+                reasoning = reas_m.group(1).strip() if reas_m else "Technical trend and momentum alignment."
+                if sentiment in ["BULLISH", "BEARISH", "NEUTRAL"] and decision in ["BUY", "SELL", "WAIT"]:
+                    return TradeDecision(
+                        market_sentiment=sentiment,
+                        decision=decision,
+                        confidence_score=min(1.0, max(0.0, confidence)),
+                        reasoning=reasoning[:300]
+                    )
+        except Exception:
+            pass
+
+        return None
+
     async def query_ollama(self, prompt: str, system_prompt: str, model: str = None) -> str:
         model_to_use = model or self.default_model
         payload = {
@@ -128,8 +185,8 @@ class AgentLogic:
             "stream": False,
             "format": "json",
             "options": {
-                "num_predict": 400,
-                "temperature": 0.2,
+                "num_predict": 800,
+                "temperature": 0.1,
             },
         }
 
@@ -153,23 +210,27 @@ class AgentLogic:
         sym = technical_data.get("symbol", "UNKNOWN")
         tf = technical_data.get("timeframe", "M5")
         headlines = news_data.get("headlines", []) if isinstance(news_data, dict) else news_data
+        cal_summary = news_data.get("economic_calendar_summary", "") if isinstance(news_data, dict) else ""
 
         user_prompt = (
             f"Symbol: {sym} (Timeframe: {tf})\n\n"
             f"Technical Analysis:\n{json.dumps(technical_data, indent=2, default=str)}\n\n"
             f"Live News Headlines:\n{json.dumps(headlines, indent=2, default=str)}\n\n"
-            "Analyze the market direction and output your TradeDecision as JSON."
         )
+        if cal_summary:
+            user_prompt += f"Macroeconomic Calendar & Event Schedule:\n{cal_summary}\n\n"
+
+        user_prompt += "Analyze the market direction and output your TradeDecision as JSON."
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 raw_response = await self.query_ollama(user_prompt, system_prompt)
-                json_str = self._extract_json(raw_response)
-                decision_dict = json.loads(json_str)
-                decision = TradeDecision(**decision_dict)
-                logger.info(f"Successfully parsed TradeDecision on attempt {attempt + 1}")
-                return decision
+                decision = self._parse_or_recover_trade_decision(raw_response)
+                if decision:
+                    logger.info(f"Successfully parsed TradeDecision on attempt {attempt + 1}")
+                    return decision
+                raise ValueError("Could not parse or recover TradeDecision from response.")
             except Exception as e:
                 logger.warning(f"Failed to parse TradeDecision on attempt {attempt + 1}: {e}")
                 if attempt == max_retries - 1:

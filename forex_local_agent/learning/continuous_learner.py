@@ -74,10 +74,19 @@ class ContinuousLearner:
         # Sync to Supabase cloud
         if self.supabase:
             try:
+                rule_id = f"RULE_{int(datetime.now().timestamp())}"
+                self.supabase.log_learned_rule(
+                    rule_id=rule_id,
+                    category=category,
+                    directive=rule_text.strip(),
+                    source=source,
+                    metadata={"timestamp": now_str}
+                )
                 self.supabase.log_telemetry(
                     agent_name="ContinuousLearner",
                     action_type="LEARNED_RULE",
                     details={
+                        "rule_id": rule_id,
                         "rule": rule_text.strip(),
                         "category": category,
                         "source": source

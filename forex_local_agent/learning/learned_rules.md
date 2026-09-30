@@ -456,3 +456,43 @@ RULE #202609301016 [EURJPY]: Implement a stop-loss order to protect your positio
 RULE #202609301825 [XAUUSD]: Do not initiate counter-trend SELL trades on XAUUSD when H1 Higher Timeframe trend is BULLISH (Price > 20 EMA and 20 EMA > 50 EMA).
   Root cause: Counter-trend short entries on XAUUSD during a macro parabolic bull run caused -$51.72 in outlier drawdown (36% of daily losses).
   Lesson: High-beta commodities cannot be mean-reverted on M5 against higher timeframe momentum; trend alignment must be strictly non-negotiable, and minimum commodity SL must reflect $3.50 (350 points) volatility cushion.
+
+
+RULE #202609301046 [GBPCHF]: Implement a stop-loss order to protect your position.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202609301046 [NZDCHF]: Implement a margin alert system
+  Root cause: Insufficient margin
+  Lesson: Ensure sufficient margin before placing trades
+
+
+RULE #202609301046 [XAUUSD]: Implement a volume check before executing orders to prevent losses
+  Root cause: Insufficient volume to execute the order
+  Lesson: Always ensure there is sufficient volume to execute an order to avoid losing money
+
+
+RULE #202609301046 [XAUUSD]: Implement a volume-based stop-loss strategy to manage risk
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202609301046 [EURJPY]: Implement a volume-based stop-loss strategy to prevent large losses.
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets.
+
+
+RULE #202609301111 [EURJPY]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202609301201 [EURAUD]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade before executing it
+
+
+RULE #202609302005 [CALENDAR/MACRO]: Enforce a 30-minute pre-release and 15-minute post-release trading blackout on any currency pair associated with High-Impact macroeconomic events (CPI, NFP, Fed/Central Bank Rate Decisions, GDP).
+  Root cause: Agent entered trades minutes prior to US macroeconomic releases, causing sudden slippage and premature ATR Stop Loss hunting during volatility spikes.
+  Lesson: Never gamble through high-impact macroeconomic releases; all trades on relevant currencies must be strictly rejected during the blackout window, and open positions should have stops protected.

@@ -3,5 +3,7 @@ __pycache__/
 *.pyc
 logs/*.log
 *.log
+!forex_local_agent/logs/code_evolution.log
 memory_fallback.json
 chroma_db/
+*calendar_cache.json
