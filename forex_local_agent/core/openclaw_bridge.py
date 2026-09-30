@@ -62,7 +62,7 @@ class OpenClawBridge:
 
     async def _send_whatsapp_message(self, message: str) -> bool:
         if not self.whatsapp_number:
-            logger.warning("WhatsApp number not configured. Cannot send message.")
+            logger.debug("[OpenClawBridge] WhatsApp number not configured. Message skipped.")
             return False
 
         payload = {
@@ -109,6 +109,11 @@ class OpenClawBridge:
             await self.send_emergency_email(f"CRITICAL Alert: {datetime.now().isoformat()}", message)
 
     async def send_emergency_email(self, subject: str, body: str):
+        email_enabled = self.config.get("alerts", {}).get("email_enabled", False)
+        if not email_enabled or not self.admin_email or self.smtp_host in ("localhost", "127.0.0.1"):
+            logger.debug(f"[OpenClawBridge] SMTP not configured. Emergency email skipped: {subject}")
+            return
+
         try:
             msg = MIMEText(body)
             msg['Subject'] = subject

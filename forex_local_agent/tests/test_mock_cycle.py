@@ -82,6 +82,23 @@ async def run_sandboxed_dry_run():
     print(f"  Lot:      {params.get('lot')}")
     print(f"  Risk/Rwd: {params.get('risk_reward_ratio')}")
     
+    # 6. Test Trailing Stop & Break-Even Manager
+    print(f"\n[STEP 6] Testing Active Trailing Stop Manager...")
+    mods = mt5_eng.manage_trailing_stops()
+    print(f"Trailing Stop Manager executed successfully ({len(mods)} active positions modified).")
+    
+    # 7. Test Risk Wall Defenses
+    print(f"\n[STEP 7] Testing Risk Wall Rejection Defenses...")
+    # Test Gold Balance Guard on small accounts
+    gold_mock_params = {
+        "symbol": "XAUUSD", "action": "BUY", "order_type": 0,
+        "entry": 4200.0, "sl": 4195.0, "tp": 4210.0, "lot": 0.01,
+        "risk_amount": 5.0
+    }
+    gold_eval = mt5_eng.execute_trade(gold_mock_params)
+    print(f"Gold Trade Evaluation (Balance Guard): {gold_eval.get('status')} - {gold_eval.get('message')}")
+    assert gold_eval.get("status") in ["rejected", "error"], "Gold balance guard should protect small balance"
+
     print("\n" + "=" * 60)
     print("DRY-RUN REGRESSION TEST COMPLETED: ALL ASSERTIONS PASSED (100% OK)")
     print("=" * 60)

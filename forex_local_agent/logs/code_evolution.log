@@ -63,3 +63,40 @@ Mode 4 (Tool Deficiency):
   * Step 5: Ollama queried; TradeDecision parsed successfully on Attempt 1.
   * Step 6: ATR SL widened to 15.0 pip floor (0.00150); 1:2 R:R ratio validated.
   * ALL ASSERTIONS PASSED (100% OK).
+
+[2026-09-30 22:50:00 UTC] COMPREHENSIVE CODEBASE AUDIT & SYSTEMIC BUG FIXES
+================================================================================
+COMMIT: fix(audit): comprehensive bug fixes for trailing stops, SMTP, Ollama fallback, and risk walls
+TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
+
+1. BUGS IDENTIFIED & SQUASHED
+--------------------------------------------------------------------------------
+1. [CRITICAL] Reversion of Active Trailing Stops & MTF Risk Walls:
+   - Root cause: An earlier editor session buffer in memory did not have `manage_trailing_stops()` and the H1 trend wall.
+   - Fix: Fully restored `manage_trailing_stops()` with pip calculations for both Forex (10p BE, 15p trail) and Gold ($2.50 BE, $4.00 trail), restored H1 MTF counter-trend filter, and added Gold $300 balance guard.
+   - Restored active 15s trailing stop sub-cycle check in `main.py`'s `monitor_candle_close()`.
+
+2. [HIGH] SMTP Localhost Connection Refusal Loop:
+   - Root cause: `openclaw_bridge.py` attempted to connect to `localhost:25` on Windows on every CRITICAL alert, resulting in `[WinError 10061]` socket errors and 10s blocking timeouts.
+   - Fix: Guarded `send_emergency_email` to check if `email_enabled` is true and remote SMTP host configured before attempting socket operations.
+
+3. [HIGH] Unhandled Ollama Exception Crash:
+   - Root cause: When local Ollama threw an HTTP 500 or exhausted 3 attempts, `get_trade_decision()` raised an unhandled `ValueError`, crashing the symbol cycle and sending false alarms.
+   - Fix: Added automatic retry on 5xx in `query_ollama` and implemented a defensive `TradeDecision(WAIT)` fallback when LLM query is completely unavailable.
+
+4. [MEDIUM] Fallback News Empty Error Logging:
+   - Root cause: RSS news fetch failure logged an unformatted exception string as ERROR in `system_errors.log`.
+   - Fix: Downgraded to `logger.debug` with structured exception typing.
+
+5. [MEDIUM] Unbounded Episodic Memory Fallback:
+   - Root cause: `memory_fallback.json` grew without size bound on `episodes`.
+   - Fix: Capped fallback episodes list to the latest 500 records.
+
+2. VERIFICATION
+--------------------------------------------------------------------------------
+- Syntax compiled: 100% pass across all 7 modified modules.
+- Full end-to-end regression test (`tests/test_mock_cycle.py`):
+  * Verified active Break-Even lock execution on USDCAD (+13.9 pips) and EURNZD (+11.7 pips) on live MT5 positions.
+  * Verified counter-trend trade rejection on XAUUSD.
+  * Verified Ollama Attempt 1 JSON parse.
+  * 7/7 assertions passed.

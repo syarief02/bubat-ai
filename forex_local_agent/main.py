@@ -509,13 +509,20 @@ class ForexAgent:
         return next_close, sleep_seconds
 
     async def monitor_candle_close(self, sleep_seconds: Optional[float] = None):
-        """Wait cleanly until the next candle close without cluttering terminal output."""
+        """Wait cleanly until the next candle close while actively managing trailing stops and breakeven."""
         if sleep_seconds is None:
             _, sleep_seconds = self.get_next_candle_info()
 
-        # Sleep in chunks so we can check the running flag
+        # Sleep in 15-second chunks so we actively manage trailing stops in real-time
         while sleep_seconds > 0 and self.running:
-            chunk = min(sleep_seconds, 5)
+            try:
+                mods = self.mt5_engine.manage_trailing_stops()
+                for m in mods:
+                    self.supabase.log_telemetry("MT5Engine", "TRAILING_STOP_UPDATE", m, status="SUCCESS")
+            except Exception as e:
+                logger.debug(f"Error in trailing stop check: {e}")
+
+            chunk = min(sleep_seconds, 15)
             await asyncio.sleep(chunk)
             sleep_seconds -= chunk
 

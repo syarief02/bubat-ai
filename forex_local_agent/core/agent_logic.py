@@ -190,15 +190,20 @@ class AgentLogic:
             },
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(f"{self.ollama_url}/api/generate", json=payload)
-                response.raise_for_status()
-                data = response.json()
-                return data.get("response", "")
-        except Exception as e:
-            logger.error(f"Error querying Ollama: {e}")
-            raise
+        for q_attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(f"{self.ollama_url}/api/generate", json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                    return data.get("response", "")
+            except Exception as e:
+                if q_attempt == 0:
+                    logger.warning(f"Ollama query attempt 1 encountered error: {e}. Retrying in 1.5s...")
+                    await asyncio.sleep(1.5)
+                else:
+                    logger.error(f"Ollama query failed: {e}")
+                    raise
 
     async def get_trade_decision(
         self, technical_data: Dict, news_data: Dict, memories: List[str] = None
@@ -234,7 +239,13 @@ class AgentLogic:
             except Exception as e:
                 logger.warning(f"Failed to parse TradeDecision on attempt {attempt + 1}: {e}")
                 if attempt == max_retries - 1:
-                    raise ValueError(f"Failed to get valid TradeDecision after {max_retries} attempts.")
+                    logger.error(f"[{sym}] All {max_retries} attempts failed to obtain TradeDecision: {e}. Emitting defensive WAIT.")
+                    return TradeDecision(
+                        market_sentiment="NEUTRAL",
+                        decision="WAIT",
+                        confidence_score=0.0,
+                        reasoning=f"LLM query or parsing failed after {max_retries} attempts ({e}); safe defensive WAIT."
+                    )
                 await asyncio.sleep(1)
 
     async def generate_post_mortem(self, trade_data: Dict) -> PostMortem:

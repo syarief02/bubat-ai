@@ -208,7 +208,7 @@ class SentimentEngine:
                     logger.info(f"Retrieved {len(results)} live news headlines via Google News RSS.")
                     return results
         except Exception as err:
-            logger.error(f"Fallback news retrieval failed: {err}")
+            logger.debug(f"Fallback news retrieval failed for {query} ({type(err).__name__}: {err})")
         return []
 
     async def scrape_article(self, url: str) -> str:

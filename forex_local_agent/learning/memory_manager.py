@@ -75,6 +75,7 @@ class MemoryManager:
         if self.use_fallback:
             data = self._read_fallback()
             data["episodes"].append(episode)
+            data["episodes"] = data["episodes"][-500:]
             self._write_fallback(data)
         else:
             try:
