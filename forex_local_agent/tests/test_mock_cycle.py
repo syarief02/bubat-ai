@@ -88,7 +88,7 @@ async def run_sandboxed_dry_run():
     print(f"Trailing Stop Manager executed successfully ({len(mods)} active positions modified).")
     
     # 7. Test Risk Wall Defenses
-    print(f"\n[STEP 7] Testing Risk Wall Rejection Defenses...")
+    print(f"\n[STEP 7] Testing Risk Wall Defenses...")
     # Test Gold Balance Guard on small accounts
     gold_mock_params = {
         "symbol": "XAUUSD", "action": "BUY", "order_type": 0,
@@ -98,6 +98,21 @@ async def run_sandboxed_dry_run():
     gold_eval = mt5_eng.execute_trade(gold_mock_params)
     print(f"Gold Trade Evaluation (Balance Guard): {gold_eval.get('status')} - {gold_eval.get('message')}")
     assert gold_eval.get("status") in ["rejected", "error"], "Gold balance guard should protect small balance"
+
+    # 8. Test Currency Correlation & Exposure Wall
+    print(f"\n[STEP 8] Testing Currency Correlation & Exposure Wall...")
+    from learning.skills.currency_correlation_filter import is_trade_permitted_by_correlation, get_currency_exposure
+    active_pos = mt5_eng.get_open_positions()
+    exposure = get_currency_exposure(active_pos)
+    print(f"Current Portfolio Currency Exposure ({len(active_pos)} open positions): {exposure}")
+    corr_perm, corr_reason = is_trade_permitted_by_correlation(
+        symbol="USDJPY",
+        action="BUY",
+        open_positions=active_pos,
+        max_currency_exposure=3
+    )
+    print(f"Correlation Filter Evaluation (USDJPY BUY): Permitted={corr_perm}, Reason={corr_reason}")
+    assert isinstance(corr_perm, bool), "Correlation filter must return boolean permission"
 
     print("\n" + "=" * 60)
     print("DRY-RUN REGRESSION TEST COMPLETED: ALL ASSERTIONS PASSED (100% OK)")

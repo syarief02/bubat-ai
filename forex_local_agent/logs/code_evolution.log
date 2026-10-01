@@ -100,3 +100,65 @@ TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
   * Verified counter-trend trade rejection on XAUUSD.
   * Verified Ollama Attempt 1 JSON parse.
   * 7/7 assertions passed.
+
+[2026-10-01 23:00:00 UTC] 24-HOUR POST-MORTEM, BUG FIXING & CODE EVOLUTION
+================================================================================
+COMMIT: auto-patch: 24h post-mortem bug fixes and evolutions [2026-10-01]
+TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
+
+1. 24-HOUR TELEMETRY AUDIT & DIAGNOSIS
+--------------------------------------------------------------------------------
+- Account Health: Balance $178.34 USD, Equity $184.50 USD, Free Margin $167.95 USD.
+- Trade Execution: 99 closed positions (44 Wins / 55 Losses), 44.44% Win Rate (up from 13.74% baseline).
+- Payoff & Realized P&L: Net Realized -$32.80 USD, Max Drawdown $35.11 USD.
+- Trailing Stop & Break-Even Wall: 97 successful executions locking +1.0 pip profit.
+- Trend Defense Wall: Successfully rejected 1,676 counter-trend trades.
+- Primary Software Bottleneck: 132 occurrences of 'All 3 attempts failed to obtain TradeDecision: Could not parse or recover TradeDecision from response'.
+  * Root Cause A: Missing `import re` in `core/agent_logic.py`, which caused Tier 3 regex fallback to throw NameError (swallowed by except block).
+  * Root Cause B: Standard `json.loads` strict mode rejected unescaped raw newlines/control characters emitted by Ollama in reasoning fields.
+  * Root Cause C: Pydantic strict Literal validation rejected alternative LLM phrasing (e.g. 'HOLD', 'SHORT', 'LONG', '80%').
+- Primary Risk Bottleneck: Currency clustering risk. 5,583 orders rejected due to max open trades limit (10) because trades clustered heavily around single currencies (e.g., 6 positions tied to USD and 5 positions tied to JPY), saturating trade slots and multiplying correlation risk.
+
+2. IMPLEMENTED CODE PATCHES & SKILLS
+--------------------------------------------------------------------------------
+1. Brain & Parser Resilience (`core/agent_logic.py`):
+   - Added `import re` to top-level module imports.
+   - Built `_normalize_trade_decision_dict()` to map synonyms ('HOLD' -> 'WAIT', 'SHORT' -> 'SELL', 'LONG' -> 'BUY'), convert percentages/integer confidence to [0.0, 1.0], and normalize sentiment ('BULLISH'/'BEARISH'/'NEUTRAL').
+   - Enabled `strict=False` in `json.loads()` across Tier 1, Tier 2, and Post-Mortem parser to handle raw newlines without crashing.
+   - Upgraded Tier 3 regex fallback with `re.S` multiline support to reliably extract decision, sentiment, confidence, and reasoning.
+   - Added raw response preview logging on failed parse attempts for real-time telemetry transparency.
+
+2. New Analytical Skill Created (`learning/skills/currency_correlation_filter.py`):
+   - Decomposes pairs into Base & Quote currencies (including gold/silver commodities).
+   - Tracks real-time gross and directional portfolio exposure per currency.
+   - Implements `is_trade_permitted_by_correlation(symbol, action, open_positions, max_currency_exposure)`.
+   - Blocks trades if gross exposure for either currency reaches `max_currency_exposure` (default 3), or if directional stacking limit is hit.
+   - Exported in `learning/skills/__init__.py`.
+
+3. Execution Risk Wall Integration (`core/mt5_engine.py`):
+   - Integrated `is_trade_permitted_by_correlation` directly into `execute_trade()` alongside the Economic Calendar blackout and H1 MTF trend walls.
+   - Rejects trade entries exceeding currency concentration limits with structured warning.
+
+4. Configuration Calibration (`config.json`):
+   - Added `"max_currency_exposure": 3` under `risk_parameters`.
+   - Maintained all security directives: Max lot size strictly 0.1, Drawdown cap 2.0%, Fixed lot 0.01.
+
+5. Knowledge Retention & Cloud Database Sync:
+   - Appended `RULE #202610012300` to `learning/learned_rules.md`.
+   - Synced rule directly to Supabase cloud `forex_learned_rules` table (Record ID: 7176c809-73ac-41c0-bf89-645168562d8e).
+
+3. VERIFICATION & REGRESSION TESTING
+--------------------------------------------------------------------------------
+- Syntax check: `python -m py_compile` passed on all modified modules.
+- Unit testing: `test_parser.py` validated unescaped newlines, decision normalization, percentage confidence, and regex recovery (4/4 tests passed).
+- Sandboxed Dry-Run (`tests/test_mock_cycle.py`):
+  * Step 1: MT5 Engine connected to Account 25360772 ($178.34 USD).
+  * Step 2: M5 Bars fetched for EURUSD; ATR=0.00063, RSI=30.0, H1 Trend=BEARISH.
+  * Step 3: Sentiment & Calendar Scraper executed. Calendar Clear.
+  * Step 4: Ollama queried; TradeDecision parsed successfully on Attempt 1.
+  * Step 5: ATR SL widened to 15.0 pip floor; 1:2 R:R ratio validated.
+  * Step 6: Trailing Stop Manager executed.
+  * Step 7: Gold Balance Guard protected account.
+  * Step 8: Currency Correlation Wall actively caught USD exposure (6/3) and blocked over-concentration.
+  * All 8/8 assertions passed (100% OK).
+

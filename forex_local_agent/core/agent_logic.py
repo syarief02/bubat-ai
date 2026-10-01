@@ -10,6 +10,7 @@ All quantitative math is handled deterministically by mt5_engine.py.
 import httpx
 import json
 import asyncio
+import re
 from pydantic import BaseModel, Field
 from typing import Literal, Optional, Dict, Any, List
 from loguru import logger
@@ -23,6 +24,63 @@ class TradeDecision(BaseModel):
     decision: Literal["BUY", "SELL", "WAIT"]
     confidence_score: float = Field(ge=0.0, le=1.0)
     reasoning: str
+
+
+def _normalize_trade_decision_dict(data: Dict[str, Any]) -> Optional[TradeDecision]:
+    """Deterministically normalizes and sanitizes raw dictionary into a valid TradeDecision."""
+    if not isinstance(data, dict):
+        return None
+
+    # 1. Decision mapping & normalization
+    raw_dec = data.get("decision") or data.get("action") or data.get("signal") or data.get("order") or ""
+    dec_str = str(raw_dec).strip().upper()
+    if dec_str in ["BUY", "LONG", "BUYING"]:
+        decision = "BUY"
+    elif dec_str in ["SELL", "SHORT", "SELLING"]:
+        decision = "SELL"
+    elif dec_str in ["WAIT", "HOLD", "PASS", "STAND_ASIDE", "STAND ASIDE", "NEUTRAL", "NONE", "NO_TRADE", "NO TRADE", "FLAT"]:
+        decision = "WAIT"
+    else:
+        # If no recognizable decision, return None
+        return None
+
+    # 2. Sentiment mapping & normalization
+    raw_sent = data.get("market_sentiment") or data.get("sentiment") or ""
+    sent_str = str(raw_sent).strip().upper()
+    if "BULL" in sent_str or sent_str in ["BUY", "POSITIVE", "UP"]:
+        sentiment = "BULLISH"
+    elif "BEAR" in sent_str or sent_str in ["SELL", "NEGATIVE", "DOWN"]:
+        sentiment = "BEARISH"
+    else:
+        sentiment = "NEUTRAL"
+
+    # 3. Confidence mapping & normalization
+    raw_conf = data.get("confidence_score")
+    if raw_conf is None:
+        raw_conf = data.get("confidence") or data.get("score") or data.get("confidence_level")
+
+    try:
+        if isinstance(raw_conf, str):
+            raw_conf = raw_conf.replace("%", "").strip()
+        confidence = float(raw_conf)
+        if confidence > 1.0:
+            confidence = confidence / 100.0
+        confidence = min(1.0, max(0.0, confidence))
+    except (ValueError, TypeError):
+        confidence = 0.50 if decision != "WAIT" else 0.0
+
+    # 4. Reasoning normalization
+    raw_reasoning = data.get("reasoning") or data.get("rationale") or data.get("explanation") or ""
+    reasoning = str(raw_reasoning).strip()[:500]
+    if not reasoning:
+        reasoning = f"Deterministic decision based on technical and momentum alignment: {decision} ({sentiment})."
+
+    return TradeDecision(
+        market_sentiment=sentiment,
+        decision=decision,
+        confidence_score=round(confidence, 2),
+        reasoning=reasoning
+    )
 
 
 class PostMortem(BaseModel):
@@ -124,11 +182,16 @@ class AgentLogic:
 
     def _parse_or_recover_trade_decision(self, raw_text: str) -> Optional[TradeDecision]:
         """Multi-tier resilient parser: Standard JSON -> Auto-Repair -> Regex extraction."""
-        # Tier 1: Standard JSON parse
+        if not raw_text or not isinstance(raw_text, str):
+            return None
+
+        # Tier 1: Standard JSON parse (allowing unescaped control chars like newlines)
         json_str = self._extract_json(raw_text)
         try:
-            data = json.loads(json_str)
-            return TradeDecision(**data)
+            data = json.loads(json_str, strict=False)
+            res = _normalize_trade_decision_dict(data)
+            if res:
+                return res
         except Exception:
             pass
 
@@ -140,37 +203,40 @@ class AgentLogic:
                 q_start = cleaned.find('"', idx + 12)
                 if q_start != -1:
                     content_after = cleaned[q_start + 1:]
-                    # If no closing quote or unclosed brace
+                    # If unclosed quote or missing closing brace
                     if not content_after.endswith('"}') and not content_after.endswith('"\n}'):
-                        # Truncate at last space and close JSON
                         last_space = content_after.rfind(' ')
                         salvaged = content_after[:last_space] if last_space != -1 else content_after[:150]
                         salvaged = salvaged.replace('"', "'")
                         repaired = f'{cleaned[:q_start + 1]}{salvaged}"}}'
-                        data = json.loads(repaired)
-                        return TradeDecision(**data)
+                        data = json.loads(repaired, strict=False)
+                        res = _normalize_trade_decision_dict(data)
+                        if res:
+                            return res
         except Exception:
             pass
 
-        # Tier 3: Deterministic Regex Fallback Extraction
+        # Tier 3: Deterministic Regex Fallback Extraction (handles multiline with re.S)
         try:
-            sent_m = re.search(r'"market_sentiment"\s*:\s*"([A-Z]+)"', raw_text, re.I)
-            dec_m = re.search(r'"decision"\s*:\s*"([A-Z]+)"', raw_text, re.I)
-            conf_m = re.search(r'"confidence_score"\s*:\s*([0-9.]+)', raw_text)
-            reas_m = re.search(r'"reasoning"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', raw_text)
+            sent_m = re.search(r'"(?:market_sentiment|sentiment)"\s*:\s*"([^"]+)"', raw_text, re.I)
+            dec_m = re.search(r'"(?:decision|action|signal|order)"\s*:\s*"([^"]+)"', raw_text, re.I)
+            conf_m = re.search(r'"(?:confidence_score|confidence|score)"\s*:\s*([0-9.]+)', raw_text, re.I)
+            reas_m = re.search(r'"(?:reasoning|rationale|explanation)"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', raw_text, re.S)
 
-            if sent_m and dec_m and conf_m:
-                sentiment = sent_m.group(1).upper()
-                decision = dec_m.group(1).upper()
-                confidence = float(conf_m.group(1))
-                reasoning = reas_m.group(1).strip() if reas_m else "Technical trend and momentum alignment."
-                if sentiment in ["BULLISH", "BEARISH", "NEUTRAL"] and decision in ["BUY", "SELL", "WAIT"]:
-                    return TradeDecision(
-                        market_sentiment=sentiment,
-                        decision=decision,
-                        confidence_score=min(1.0, max(0.0, confidence)),
-                        reasoning=reasoning[:300]
-                    )
+            extracted_data = {}
+            if dec_m:
+                extracted_data["decision"] = dec_m.group(1)
+            if sent_m:
+                extracted_data["market_sentiment"] = sent_m.group(1)
+            if conf_m:
+                extracted_data["confidence_score"] = conf_m.group(1)
+            if reas_m:
+                extracted_data["reasoning"] = reas_m.group(1).replace("\n", " ").strip()
+
+            if extracted_data.get("decision"):
+                recovered = _normalize_trade_decision_dict(extracted_data)
+                if recovered:
+                    return recovered
         except Exception:
             pass
 
@@ -229,15 +295,17 @@ class AgentLogic:
 
         max_retries = 3
         for attempt in range(max_retries):
+            raw_response = ""
             try:
                 raw_response = await self.query_ollama(user_prompt, system_prompt)
                 decision = self._parse_or_recover_trade_decision(raw_response)
                 if decision:
-                    logger.info(f"Successfully parsed TradeDecision on attempt {attempt + 1}")
+                    logger.info(f"[{sym}] Successfully parsed TradeDecision on attempt {attempt + 1}")
                     return decision
-                raise ValueError("Could not parse or recover TradeDecision from response.")
+                raise ValueError(f"Could not parse or recover TradeDecision from response (len={len(raw_response)}).")
             except Exception as e:
-                logger.warning(f"Failed to parse TradeDecision on attempt {attempt + 1}: {e}")
+                preview = repr(raw_response)[:180] if raw_response else "EMPTY"
+                logger.warning(f"[{sym}] Failed to parse TradeDecision on attempt {attempt + 1}: {e} | Raw: {preview}")
                 if attempt == max_retries - 1:
                     logger.error(f"[{sym}] All {max_retries} attempts failed to obtain TradeDecision: {e}. Emitting defensive WAIT.")
                     return TradeDecision(
@@ -267,10 +335,21 @@ class AgentLogic:
             try:
                 raw = await self.query_ollama(user_prompt, system_prompt)
                 clean_json = self._extract_json(raw)
-                return PostMortem(**json.loads(clean_json))
+                data = json.loads(clean_json, strict=False)
+                # Normalize outcome
+                raw_outcome = str(data.get("outcome", "LOSS")).strip().upper()
+                data["outcome"] = "WIN" if "WIN" in raw_outcome or "PROFIT" in raw_outcome else "LOSS"
+                return PostMortem(**data)
             except Exception as e:
                 logger.warning(f"PostMortem parsing attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
-                    raise ValueError("Failed to generate PostMortem")
+                    sym = trade_data.get("symbol", "UNKNOWN")
+                    return PostMortem(
+                        trade_symbol=sym,
+                        outcome="LOSS" if trade_data.get("profit", 0) < 0 else "WIN",
+                        root_cause=f"Automated post-mortem: Trade closed with profit {trade_data.get('profit')}",
+                        lesson_learned="Maintain disciplined risk management and adherence to technical momentum.",
+                        new_rule=f"RULE #{datetime.now().strftime('%Y%m%d%H%M')} [{sym}]: Verify H1 trend and spread before execution."
+                    )
                 await asyncio.sleep(1)
 

@@ -511,3 +511,299 @@ RULE #202609301417 [EURJPY]: Implement a volume-based strategy to increase profi
 RULE #202609301421 [NZDUSD]: Always check the price you enter a trade at and ensure that it is the same as the price you expect to receive at the end of the trade. This will prevent losses and ensure that your trades are profitable.
   Root cause: The trade was executed at a price of 0.56442, which was below the entry price of 0.56442, resulting in a loss.
   Lesson: Always ensure that the price you enter a trade at is the same as the price you expect to receive at the end of the trade. In this case, the price was below the entry price, which led to a loss.
+
+
+RULE #202609301459 [EURJPY]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202609301459 [NZDUSD]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202609301516 [GBPAUD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202609301531 [EURCHF]: Increase the volume limit for the trade
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade
+
+
+RULE #202609301531 [USDJPY]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202609301536 [USDCHF]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202609301601 [EURUSD]: Implement a volume-based stop-loss strategy to reduce risk
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202609301606 [EURJPY]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade before executing it
+
+
+RULE #202609301611 [AUDCAD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202609301616 [GBPAUD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202609301626 [EURJPY]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202609301626 [USDJPY]: Implement a volume-based stop-loss strategy to prevent losses
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202609301626 [AUDUSD]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in high-frequency trading environments
+
+
+RULE #202609301646 [NZDJPY]: Implement a more sophisticated risk management system to prevent similar losses in the future.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202609301726 [USDCHF]: When executing a trade, it is recommended to use a stop loss order to limit the potential loss of the trade.
+  Root cause: The trade was executed at a price of 0.83507, which resulted in a loss of 1.8 USD.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to be aware of potential risks associated with the trade.
+
+
+RULE #202609301731 [AUDUSD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202609301736 [USDJPY]: Implement a more stringent stop loss strategy to prevent losses.
+  Root cause: The trade was executed at a price of 157.021, which was below the entry price of 157.021, resulting in a loss.
+  Lesson: Always ensure that the price at which a trade is executed is within the range of the entry price and the stop loss.
+
+
+RULE #202609301746 [CHFJPY]: Implement a volume check before executing trades to prevent losses
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure that the volume you are trying to trade is sufficient to avoid losing money
+
+
+RULE #202609301751 [EURUSD]: In the future, traders should be more cautious when entering trades and should consider the potential risks associated with such trades.
+  Root cause: The trade was executed at a price of 1.13495, which resulted in a loss of 1.5 units.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to be aware of potential risks associated with such trades.
+
+
+RULE #202609301756 [EURAUD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202609301756 [CHFJPY]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202609301820 [EURGBP]: Implement a volume check before placing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202609301911 [EURCHF]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202609301911 [EURAUD]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your trading strategy accordingly.
+
+
+RULE #202609302021 [CADJPY]: Implement a more sophisticated order validation system to ensure trades are executed at the correct price.
+  Root cause: Order was filled at a lower price than expected, resulting in a loss.
+  Lesson: Always check the order price before executing trades to avoid unexpected losses.
+
+
+RULE #202609302146 [AUDCAD]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202609302321 [EURJPY]: Increase your volume before placing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure you have enough volume to execute your trades
+
+
+RULE #202610010001 [EURCAD]: When executing a trade, it is recommended to use a stop loss order to limit the potential loss.
+  Root cause: The trade was executed at a price of 1.61087, which resulted in a loss of 1.05 units.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to adjust the position size accordingly.
+
+
+RULE #202610010001 [GBPUSD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade before executing it
+
+
+RULE #202610010006 [NZDUSD]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202610010006 [USDCHF]: When executing a trade, it is recommended to use a trailing stop loss to ensure that the trade is not executed at a loss.
+  Root cause: The trade was executed at a price of 0.83372, which resulted in a loss of 1.8 USD.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to adjust the order accordingly to avoid losses.
+
+
+RULE #202610010006 [CADCHF]: Increase the volume limit for the trade
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade
+
+
+RULE #202610010006 [NZDCHF]: Implement a volume limit to prevent trades from being executed when there is insufficient volume
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202610010006 [CHFJPY]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202610010431 [EURUSD]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202610010626 [GBPUSD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202610010941 [EURCAD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202610011011 [GBPUSD]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202610011025 [GBPUSD]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202610011036 [EURCHF]: Implement a volume check before executing trades
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202610011036 [GBPNZD]: Implement a volume check before executing trades to prevent insufficient volume issues
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202610011040 [USDJPY]: Implement a volume check before executing trades to avoid unnecessary losses
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure you have enough volume to execute a trade, especially in volatile markets
+
+
+RULE #202610011046 [CADCHF]: Implement a volume check before executing trades
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade before placing it
+
+
+RULE #202610011050 [EURAUD]: Implement a volume check before executing trades to avoid insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202610011055 [EURCHF]: When executing a trade, it is recommended to use a stop loss order that is set at a price that is slightly above the current market price to protect against potential losses.
+  Root cause: The trade was executed at a price of 0.94430, which resulted in a loss of 1.83 units.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to adjust the order accordingly.
+
+
+RULE #202610011105 [AUDNZD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade
+
+
+RULE #202610011120 [EURAUD]: Implement a volume check before executing trades to prevent insufficient volume errors
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202610011141 [CHFJPY]: Implement a volume-based stop-loss strategy to manage risk
+  Root cause: Insufficient volume to execute order
+  Lesson: Always ensure sufficient volume to execute orders to avoid slippage and losses
+
+
+RULE #202610011221 [GBPCHF]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202610011226 [USDCHF]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202610011321 [GBPUSD]: Increase the volume limit for the trade
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume to execute a trade
+
+
+RULE #202610011321 [EURUSD]: The trader should consider adjusting the entry price to a higher level to reduce the potential loss. Additionally, the trader should monitor the market and adjust the trade strategy accordingly.
+  Root cause: The trade was executed at a price of 1.12829, which was significantly lower than the entry price of 1.13000. The trade was closed at a loss of 1.5, which was a significant loss for the trader.
+  Lesson: It is important to carefully consider the entry price and the potential loss when trading. It is also important to monitor the market and adjust the trade strategy accordingly.
+
+
+RULE #202610011326 [USDJPY]: When executing a trade, it is important to carefully consider the price at which the trade is executed and to adjust the position accordingly. In this case, the trade was executed at a price that was too high, resulting in a loss. To avoid this in the future, it is recommended to use a stop-loss order to limit the potential loss of the trade.
+  Root cause: The trade was executed at a price of 158.206, which resulted in a loss of 0.95 USD.
+  Lesson: It is important to carefully consider the price at which a trade is executed and to adjust the position accordingly. In this case, the trade was executed at a price that was too high, resulting in a loss.
+
+
+RULE #202610011356 [EURUSD]: Implement a more sophisticated risk management system to prevent similar losses in the future.
+  Root cause: Order was filled at a lower price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202610011356 [EURCAD]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor market conditions and adjust your strategy accordingly.
+
+
+RULE #202610011406 [GBPAUD]: Implement a pre-trade balance check before placing orders
+  Root cause: Order execution failed due to insufficient balance
+  Lesson: Ensure sufficient balance before placing orders
+
+
+RULE #202610011456 [EURCHF]: Implement a stop-loss order to limit potential losses.
+  Root cause: Order was executed at a higher price than expected, resulting in a loss.
+  Lesson: Always monitor your order execution price and adjust your strategy accordingly.
+
+
+RULE #202610011501 [AUDUSD]: Implement a volume-based stop-loss strategy to manage risk
+  Root cause: Insufficient volume to execute the trade
+  Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202610012300 [PORTFOLIO_CORRELATION]: Restrict simultaneous active positions sharing the same base or quote currency to a maximum of 3 trades, and prohibit directional stacking across correlated pairs, preventing multi-pair cascade drawdowns during single-currency volatility spikes.
+  Root cause: Currency clustering risk where multiple pairs tied to the same currency (e.g. 5+ JPY cross pairs) were entered concurrently, saturating the 10-trade limit and amplifying directional risk.
+  Lesson: Strictly cap gross single-currency exposure to 3 active trades and eliminate correlated directional clustering.
+

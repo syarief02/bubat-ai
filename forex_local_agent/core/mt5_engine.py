@@ -25,6 +25,14 @@ except ImportError:
     except ImportError:
         is_trade_permitted_by_calendar = None
 
+try:
+    from learning.skills.currency_correlation_filter import is_trade_permitted_by_correlation
+except ImportError:
+    try:
+        from forex_local_agent.learning.skills.currency_correlation_filter import is_trade_permitted_by_correlation
+    except ImportError:
+        is_trade_permitted_by_correlation = None
+
 
 class MT5Engine:
     def __init__(self, config_path: str):
@@ -428,6 +436,23 @@ class MT5Engine:
                     return {"status": "rejected", "message": msg}
             except Exception as e:
                 logger.debug(f"Calendar check exception: {e}")
+
+        # Currency Correlation & Portfolio Concentration Wall
+        if is_trade_permitted_by_correlation:
+            try:
+                max_curr_exp = self.config.get("risk_parameters", {}).get("max_currency_exposure", 3)
+                permitted, reason = is_trade_permitted_by_correlation(
+                    symbol=symbol,
+                    action=action,
+                    open_positions=open_positions,
+                    max_currency_exposure=max_curr_exp
+                )
+                if not permitted:
+                    msg = f"REJECTED: Currency concentration limit reached for {symbol} ({reason})"
+                    logger.warning(msg)
+                    return {"status": "rejected", "message": msg}
+            except Exception as e:
+                logger.debug(f"Currency correlation check exception: {e}")
 
         account = self.get_account_info()
         if not account:

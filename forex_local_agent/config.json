@@ -26,7 +26,8 @@
     "news_blackout_post_mins": 15,
     "trailing_stop_enabled": true,
     "trailing_breakeven_pips": 10.0,
-    "trailing_step_pips": 5.0
+    "trailing_step_pips": 5.0,
+    "max_currency_exposure": 3
   },
   "trading": {
     "symbols": [
