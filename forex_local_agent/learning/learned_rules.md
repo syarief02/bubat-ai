@@ -806,3 +806,18 @@ RULE #202610011456 [EURCHF]: Implement a stop-loss order to limit potential loss
 RULE #202610011501 [AUDUSD]: Implement a volume-based stop-loss strategy to manage risk
   Root cause: Insufficient volume to execute the trade
   Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
+
+
+RULE #202610011650 [EURCHF]: Increase the volume limit for the trade
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume to execute trades
+
+
+RULE #202610011650 [AUDUSD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
+
+
+RULE #202610011655 [GBPNZD]: Implement a volume check before executing trades
+  Root cause: Insufficient volume for the trade
+  Lesson: Always ensure there is sufficient volume available for a trade to avoid losses
