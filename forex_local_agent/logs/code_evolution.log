@@ -101,64 +101,58 @@ TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
   * Verified Ollama Attempt 1 JSON parse.
   * 7/7 assertions passed.
 
-[2026-10-01 23:00:00 UTC] 24-HOUR POST-MORTEM, BUG FIXING & CODE EVOLUTION
-================================================================================
-COMMIT: auto-patch: 24h post-mortem bug fixes and evolutions [2026-10-01]
-TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
+## [2026-10-02T00:30] 24-Hour Post-Mortem Cycle #3
 
-1. 24-HOUR TELEMETRY AUDIT & DIAGNOSIS
---------------------------------------------------------------------------------
-- Account Health: Balance $178.34 USD, Equity $184.50 USD, Free Margin $167.95 USD.
-- Trade Execution: 99 closed positions (44 Wins / 55 Losses), 44.44% Win Rate (up from 13.74% baseline).
-- Payoff & Realized P&L: Net Realized -$32.80 USD, Max Drawdown $35.11 USD.
-- Trailing Stop & Break-Even Wall: 97 successful executions locking +1.0 pip profit.
-- Trend Defense Wall: Successfully rejected 1,676 counter-trend trades.
-- Primary Software Bottleneck: 132 occurrences of 'All 3 attempts failed to obtain TradeDecision: Could not parse or recover TradeDecision from response'.
-  * Root Cause A: Missing `import re` in `core/agent_logic.py`, which caused Tier 3 regex fallback to throw NameError (swallowed by except block).
-  * Root Cause B: Standard `json.loads` strict mode rejected unescaped raw newlines/control characters emitted by Ollama in reasoning fields.
-  * Root Cause C: Pydantic strict Literal validation rejected alternative LLM phrasing (e.g. 'HOLD', 'SHORT', 'LONG', '80%').
-- Primary Risk Bottleneck: Currency clustering risk. 5,583 orders rejected due to max open trades limit (10) because trades clustered heavily around single currencies (e.g., 6 positions tied to USD and 5 positions tied to JPY), saturating trade slots and multiplying correlation risk.
+### TELEMETRY (24h window)
+- Closed Trades: 89 (44W / 45L / 0BE)
+- Win Rate: 49.4%
+- Gross P&L: -$24.27 | Swap: +$0.57 | Net: -$23.70
+- Avg Winner: $0.84 | Avg Loser: -$1.36
+- Payoff Ratio: 0.62 (must be >1.0 or win rate must exceed 62%)
+- Max Drawdown: -$27.32
+- Symbols Traded: 25 active pairs
+- Account: $187.26 balance / $187.48 equity
+- Active Positions: 9 (NZDUSD, NZDCHF, USDCHF, USDCAD, EURGBP, USDJPY, GBPUSD, EURUSD, EURCHF)
+- Parse Failures (24h): 161 total (29 new since 2026-10-01 16:00)
+- Parse Failures (today only): 4 (CHFJPY x2, GBPNZD x2)
 
-2. IMPLEMENTED CODE PATCHES & SKILLS
---------------------------------------------------------------------------------
-1. Brain & Parser Resilience (`core/agent_logic.py`):
-   - Added `import re` to top-level module imports.
-   - Built `_normalize_trade_decision_dict()` to map synonyms ('HOLD' -> 'WAIT', 'SHORT' -> 'SELL', 'LONG' -> 'BUY'), convert percentages/integer confidence to [0.0, 1.0], and normalize sentiment ('BULLISH'/'BEARISH'/'NEUTRAL').
-   - Enabled `strict=False` in `json.loads()` across Tier 1, Tier 2, and Post-Mortem parser to handle raw newlines without crashing.
-   - Upgraded Tier 3 regex fallback with `re.S` multiline support to reliably extract decision, sentiment, confidence, and reasoning.
-   - Added raw response preview logging on failed parse attempts for real-time telemetry transparency.
+### ROOT-CAUSE FINDINGS
+1. **CRITICAL: Working tree was REVERTED** — All bug fixes from commit 40c984c were 
+   undone on disk. The running bot was executing the OLD pre-patch code without 
+   `import re`, without `strict=False`, and without `_normalize_trade_decision_dict`.
+   This means the 132 parse failures from the previous cycle were NEVER actually fixed
+   on the running instance. Root cause: OneDrive sync or user undo.
+   → FIX: Restored all files from `git checkout HEAD --`
 
-2. New Analytical Skill Created (`learning/skills/currency_correlation_filter.py`):
-   - Decomposes pairs into Base & Quote currencies (including gold/silver commodities).
-   - Tracks real-time gross and directional portfolio exposure per currency.
-   - Implements `is_trade_permitted_by_correlation(symbol, action, open_positions, max_currency_exposure)`.
-   - Blocks trades if gross exposure for either currency reaches `max_currency_exposure` (default 3), or if directional stacking limit is hit.
-   - Exported in `learning/skills/__init__.py`.
+2. **Duplicate trade result logging** — `mt5_engine.py` line 45 added a second
+   unfiltered `logger.add("trades.log")` on top of the filtered one in `main.py`.
+   Every trade result was logged TWICE in trades.log.
+   → FIX: Removed duplicate logger.add in mt5_engine.py
 
-3. Execution Risk Wall Integration (`core/mt5_engine.py`):
-   - Integrated `is_trade_permitted_by_correlation` directly into `execute_trade()` alongside the Economic Calendar blackout and H1 MTF trend walls.
-   - Rejects trade entries exceeding currency concentration limits with structured warning.
+3. **Learned rules prompt pollution** — 47KB / 804 lines of auto-generated junk
+   rules overwhelming the LLM prompt. The `_load_learned_rules()` cap was only
+   limiting to 35 tail lines, which were all noise. The LLM was receiving zero
+   curated rules and only garbage "implement a stop-loss" rules.
+   → FIX: Rewrote `_load_learned_rules()` with quality filtering that parses
+   markdown headers (### [CATEGORY]) and only passes curated rules. Reduced
+   prompt rules from 47KB -> 1,419 chars (4 high-quality rules).
 
-4. Configuration Calibration (`config.json`):
-   - Added `"max_currency_exposure": 3` under `risk_parameters`.
-   - Maintained all security directives: Max lot size strictly 0.1, Drawdown cap 2.0%, Fixed lot 0.01.
+4. **No Ollama circuit breaker** — When Ollama goes down, the bot hammered it
+   endlessly every 5 minutes per symbol (28 symbols × 3 retries × 2 query attempts 
+   = 168 connection attempts per cycle), flooding system_errors.log with ERROR.
+   → FIX: Added circuit breaker to `query_ollama()` that opens after 5 consecutive
+   failures and blocks queries for 60s. Also downgraded from ERROR to WARNING.
 
-5. Knowledge Retention & Cloud Database Sync:
-   - Appended `RULE #202610012300` to `learning/learned_rules.md`.
-   - Synced rule directly to Supabase cloud `forex_learned_rules` table (Record ID: 7176c809-73ac-41c0-bf89-645168562d8e).
+### CODE CHANGES
+- `core/agent_logic.py`: Rewrote `_load_learned_rules()` with curated rule filter,
+  added circuit breaker to `query_ollama()` with class-level state tracking.
+- `core/mt5_engine.py`: Removed duplicate `logger.add()` for trades.log.
+- `learning/learned_rules.md`: Added Rule #202610020030 [RISK_MANAGEMENT] —
+  payoff ratio discipline requiring min 62% win rate when avg loser > avg winner.
 
-3. VERIFICATION & REGRESSION TESTING
---------------------------------------------------------------------------------
-- Syntax check: `python -m py_compile` passed on all modified modules.
-- Unit testing: `test_parser.py` validated unescaped newlines, decision normalization, percentage confidence, and regex recovery (4/4 tests passed).
-- Sandboxed Dry-Run (`tests/test_mock_cycle.py`):
-  * Step 1: MT5 Engine connected to Account 25360772 ($178.34 USD).
-  * Step 2: M5 Bars fetched for EURUSD; ATR=0.00063, RSI=30.0, H1 Trend=BEARISH.
-  * Step 3: Sentiment & Calendar Scraper executed. Calendar Clear.
-  * Step 4: Ollama queried; TradeDecision parsed successfully on Attempt 1.
-  * Step 5: ATR SL widened to 15.0 pip floor; 1:2 R:R ratio validated.
-  * Step 6: Trailing Stop Manager executed.
-  * Step 7: Gold Balance Guard protected account.
-  * Step 8: Currency Correlation Wall actively caught USD exposure (6/3) and blocked over-concentration.
-  * All 8/8 assertions passed (100% OK).
-
+### VERIFICATION
+- `python -m compileall`: 0 errors
+- `test_mock_cycle.py`: 8/8 assertions passed
+- `test_parser.py`: 9/9 unit tests passed
+- `test_sync.py`: Supabase sync confirmed (ID: 6a6b5912)
+- Rules loader filter: PASSED (47KB -> 1.4KB curated output)

@@ -42,7 +42,7 @@ class MT5Engine:
 
         log_dir = self.config_path.parent / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        logger.add(log_dir / "trades.log", rotation="10 MB")
+        # Note: trades.log logger sink is configured in main.py — do not add here to prevent duplicate entries
 
         self.tf_map = {
             "M1": mt5.TIMEFRAME_M1,

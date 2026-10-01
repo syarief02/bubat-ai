@@ -107,15 +107,51 @@ class AgentLogic:
         self.rules_path = self.config_path.parent / "learning" / "learned_rules.md"
 
     def _load_learned_rules(self) -> str:
+        """Load learned rules, filtering for high-quality curated directives only.
+        
+        The rules file accumulates both curated (human/reflexion) and auto-generated
+        (post-mortem) rules. Only curated rules marked with ### headers or the
+        PORTFOLIO_CORRELATION rule are injected into the LLM prompt.
+        Auto-generated 'RULE #' entries from post-mortems are kept on disk for
+        audit trail but excluded from the prompt to prevent noise pollution.
+        """
         if self.rules_path.exists():
             try:
                 with open(self.rules_path, "r", encoding="utf-8") as f:
                     content = f.read().strip()
-                    # Safeguard: Cap learned rules to last 2000 chars to prevent prompt bloat
-                    if len(content) > 2000:
-                        lines = content.splitlines()
-                        return "\n".join(lines[-35:])
-                    return content
+                
+                # Extract only curated high-quality rules (### headers or known critical rules)
+                curated_lines = []
+                lines = content.splitlines()
+                in_curated_block = False
+                
+                for line in lines:
+                    stripped = line.strip()
+                    # Curated rule headers start with ###
+                    if stripped.startswith("### ["):
+                        in_curated_block = True
+                        curated_lines.append(line)
+                    elif stripped.startswith("# ") or stripped.startswith("## ") or stripped == "---":
+                        # File-level headers, keep
+                        in_curated_block = False
+                        curated_lines.append(line)
+                    elif in_curated_block and stripped.startswith("- **"):
+                        curated_lines.append(line)
+                    elif in_curated_block and stripped == "":
+                        curated_lines.append(line)
+                        in_curated_block = False
+                    elif "PORTFOLIO_CORRELATION" in stripped:
+                        # Always include the correlation rule
+                        curated_lines.append(line)
+                
+                filtered = "\n".join(curated_lines).strip()
+                
+                # Safeguard: cap to 2500 chars max
+                if len(filtered) > 2500:
+                    flines = filtered.splitlines()
+                    filtered = "\n".join(flines[-40:])
+                
+                return filtered if filtered else ""
             except Exception as e:
                 logger.error(f"Failed to read learned rules: {e}")
         return ""
@@ -242,7 +278,20 @@ class AgentLogic:
 
         return None
 
+    # Ollama circuit breaker state
+    _ollama_failures: int = 0
+    _ollama_circuit_open_until: float = 0.0
+
     async def query_ollama(self, prompt: str, system_prompt: str, model: str = None) -> str:
+        """Query Ollama with circuit breaker to prevent hammering when Ollama is down."""
+        import time as _time
+        
+        # Circuit breaker: if Ollama has failed repeatedly, skip queries for a cooldown period
+        now = _time.time()
+        if AgentLogic._ollama_circuit_open_until > now:
+            remaining = int(AgentLogic._ollama_circuit_open_until - now)
+            raise ConnectionError(f"Ollama circuit breaker OPEN ({remaining}s remaining). Skipping query.")
+        
         model_to_use = model or self.default_model
         payload = {
             "model": model_to_use,
@@ -262,13 +311,22 @@ class AgentLogic:
                     response = await client.post(f"{self.ollama_url}/api/generate", json=payload)
                     response.raise_for_status()
                     data = response.json()
+                    # Reset circuit breaker on success
+                    AgentLogic._ollama_failures = 0
+                    AgentLogic._ollama_circuit_open_until = 0.0
                     return data.get("response", "")
             except Exception as e:
                 if q_attempt == 0:
                     logger.warning(f"Ollama query attempt 1 encountered error: {e}. Retrying in 1.5s...")
                     await asyncio.sleep(1.5)
                 else:
-                    logger.error(f"Ollama query failed: {e}")
+                    AgentLogic._ollama_failures += 1
+                    # After 5 consecutive failures, open circuit for 60 seconds
+                    if AgentLogic._ollama_failures >= 5:
+                        AgentLogic._ollama_circuit_open_until = _time.time() + 60.0
+                        logger.warning(f"Ollama circuit breaker OPENED after {AgentLogic._ollama_failures} failures. Cooling down 60s.")
+                        AgentLogic._ollama_failures = 0
+                    logger.warning(f"Ollama query failed: {e}")
                     raise
 
     async def get_trade_decision(

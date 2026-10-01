@@ -17,6 +17,11 @@
 - **Source**: reflexion_loss_analysis
 - **Directive**: Enforce minimum 15.0-pip Stop Loss floor to prevent broker spread and micro-noise from instantly hitting SL. Enforce 0.01 micro-lot on small demo accounts and require H1 Higher Timeframe trend alignment before entering M5 trades.
 
+### [RISK_MANAGEMENT] Rule #202610020030
+- **Date**: 2026-10-02 00:30:00 UTC
+- **Source**: 24h_post_mortem_audit
+- **Directive**: Payoff ratio discipline — when the average winner ($0.84) is smaller than the average loser ($1.36), the win rate must exceed 62% to be net profitable. Reduce false entries by requiring BOTH M5 and H1 timeframe alignment AND minimum confidence 0.80 before committing. When indicators conflict across timeframes, output WAIT.
+
 
 RULE #202609300211 [GBPAUD]: Implement a stop-loss order to limit potential losses.
   Root cause: Order was executed at a higher price than expected, resulting in a loss.
@@ -801,9 +806,3 @@ RULE #202610011456 [EURCHF]: Implement a stop-loss order to limit potential loss
 RULE #202610011501 [AUDUSD]: Implement a volume-based stop-loss strategy to manage risk
   Root cause: Insufficient volume to execute the trade
   Lesson: Always ensure there is sufficient volume to execute trades, especially in volatile markets
-
-
-RULE #202610012300 [PORTFOLIO_CORRELATION]: Restrict simultaneous active positions sharing the same base or quote currency to a maximum of 3 trades, and prohibit directional stacking across correlated pairs, preventing multi-pair cascade drawdowns during single-currency volatility spikes.
-  Root cause: Currency clustering risk where multiple pairs tied to the same currency (e.g. 5+ JPY cross pairs) were entered concurrently, saturating the 10-trade limit and amplifying directional risk.
-  Lesson: Strictly cap gross single-currency exposure to 3 active trades and eliminate correlated directional clustering.
-
