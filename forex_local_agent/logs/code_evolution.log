@@ -372,3 +372,42 @@ This window overlaps cycle #4's real window by ~20h, so findings seen in both ar
 - USDJPY: 6 trades, 2W/4L, -$3.20 (prompt-only 0.85 rule is not enforceable by the LLM).
 - Sessions: overlap + NY vs London + Asia net (hypothesis, NFP-confounded).
 - SearXNG still down (3rd consecutive cycle).
+
+## [2026-10-03T02:55] Cycle #5 follow-up: owner-approved execution upgrade
+
+### CORRECTIONS TO CYCLE #5
+- "Trade management costs 13.7R" was overstated: it compared costed real exits to a cost-free
+  unmanaged simulation. Like-for-like replay (412 trades, 96h): current BE10/trail15 -65.2R,
+  BE15/trail20 -56.2R, unmanaged -50.8R; on the cycle-5 window alone BE15/trail20 is -1.0R vs current.
+- "LLM underperforms follow-H1" did NOT hold over 96h: LLM>=0.80 H1-aligned +0.078R (n=801) vs
+  follow-H1 +0.047R (n=1,747). LLM replacement withdrawn.
+- daily_report.simulate_signals had lookahead (entry at the forming bar's close). Fixed; small effect.
+
+### FINDINGS (96h, 416 trades, -0.29R/trade, PF 0.49)
+- [LIKELY] Spread >=10% of SL: -0.57R (n=71) vs -0.17..-0.30R otherwise. Last 24h alone: +0.34R (n=7).
+- [LIKELY] London +0.25R unmanaged (n=76); Asia -0.23R (n=148); NY -0.33R (n=71).
+- [LIKELY] LLM confidence >=0.90 -0.37R simulated (n=51); 0.85-0.89 -0.26R (n=23).
+- [CONFIRMED] Slots filled first-come in config order; 1,466 capacity rejections in 96h.
+- [HYPOTHESIS] Entries chase: price ran a median 0.54R toward the trade in the prior 30 min and gave
+  back 0.19R within 15 min. Next-bar-open shadow +0.04R vs real fill -0.17R (96h); limit-pullback
+  variants tested -0.21..-0.23R, so no live change.
+- [CONFIRMED, fixed in cycle #5] 40% of trades were same-symbol re-entries within 30 min of a close.
+
+### CODE CHANGES (rollback point a874c34)
+- f495dde feat(risk): break-even 10->15 pips, trailing start 15->20 pips (owner-approved)
+- cdcfaa3 fix(report): remove lookahead from simulated signal entries
+- bfa82e1 feat(execution): ranked execution, entry window 07-13 UTC, confidence cap 0.89,
+  spread cost wall 6% of SL; maintenance/execution_quality.py; 12 offline tests
+
+### VERIFICATION
+- tests/test_execution_upgrade.py 12/12, test_cycle5_regressions.py 31/31, test_daily_loss_stop.py OK,
+  compileall OK. test_mock_cycle.py not run (blocked: touches the live account).
+- main.py restarted 18:51 UTC via run_agent.bat (single instance).
+
+### WATCHLIST
+- execution_quality.py daily: shadow vs real fill gap, R by spread bucket, quick re-entries -> ~0.
+- Trade count should drop sharply (entries only 07-13 UTC); check that London R stays positive.
+- Wall counts SESSION_WINDOW / CONFIDENCE_CAP / SPREAD_COST in daily_report.
+- 2 post-restart cycles: 0 errors / parse failures; ranking active (XAUUSD 4.2% spread/SL ranked
+  first); all signals rejected by SESSION_WINDOW at 18h UTC as designed. Evening spreads were 10-19%
+  of SL even on majors, so SPREAD_COST will also bind outside liquid hours.
