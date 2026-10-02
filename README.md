@@ -156,7 +156,8 @@ bubat AI/
     │   └── test_mock_cycle.py            # 8-step sandboxed end-to-end regression test suite
     │
     ├── maintenance/
-    │   └── model_updater.py              # Automated weekly model discovery & hot-swap
+    │   ├── model_updater.py              # Automated weekly model discovery & hot-swap
+    │   └── daily_report.py               # 24h post-mortem metrics, counterfactuals & baselines (JSON -> reports/)
     │
     └── logs/
         ├── trades.log                    # All proposed and executed trades
@@ -200,16 +201,18 @@ Before any order is dispatched to MetaTrader 5, it must pass through **9 determi
 | Wall # | Name | Logic |
 |---|---|---|
 | 1 | **H1 Multi-Timeframe Trend Wall** | Never BUY if H1 is BEARISH; never SELL if H1 is BULLISH |
-| 2 | **Daily Loss Stop** | Blocks all new entries when cumulative realized losses for the UTC day exceed `daily_loss_limit_pct` (5%) of balance |
+| 2 | **Daily Loss Stop** | Blocks all new entries when net realized losses (profit + swap + commission) since 00:00 **real UTC** exceed `daily_loss_limit_pct` (5%) of balance |
 | 3 | **Capacity Wall** | Max **10 open trades** account-wide |
 | 4 | **Duplicate Position Wall** | Only **one active position per symbol** |
-| 5 | **Economic News Blackout Wall** | Rejects if high-impact news ≤30 min ahead or ≤15 min past |
+| 5 | **Economic News Blackout Wall** | Rejects if high-impact news for either currency is ≤30 min ahead or ≤15 min past. Tier-1 USD releases (NFP, CPI, Fed rate decision, FOMC) black out **all** symbols (`news_blackout_global_tier1`) |
 | 6 | **Currency Correlation Wall** | Max **3 positions per currency** to prevent correlated cascade stops |
 | 7 | **Margin Gatekeeper** | Rejects if free margin is negative or insufficient |
 | 8 | **Spread Protection Wall** | Rejects if live spread exceeds `max_spread_pips` (3.5 pips) |
 | 9 | **Gold Balance Guard** | Forbids `XAUUSD` on accounts under **\$300 USD** |
 
 > **Note:** These walls are deterministic Python code — the LLM cannot override, bypass, or modify them.
+
+> **Broker server time:** MT5 stamps deals, ticks and bars in broker server time (Tickmill: UTC+2/UTC+3). Every history query goes through `core/mt5_time.py`, which measures the offset from live ticks during market hours and persists it in `state/`. Querying MT5 with plain UTC datetimes silently misses the most recent hours of deals.
 
 
 ---
@@ -250,7 +253,7 @@ Before any order is dispatched to MetaTrader 5, it must pass through **9 determi
   * `NEGATIVE`, `DOWN` → `BEARISH`
   * `"82%"` → `0.82`, `85` → `0.85`
 * **Ollama Circuit Breaker**: After 5 consecutive connection failures, blocks all queries for 60 seconds to prevent resource hammering. Resets automatically on first successful query.
-* **Quality-Filtered Rules Loader**: Only injects curated `### [CATEGORY]` rules into the prompt (not auto-generated post-mortem noise), reducing prompt from ~47KB to ~1.4KB.
+* **Quality-Filtered Rules Loader** (`learning/rules_loader.py`): Injects curated `### [CATEGORY]` rules as compact one-liners, capped at 2,500 chars on whole-rule boundaries (newest win). `REFLEXION` and `COMMUNICATION` rules and anything with `Source: loss_reflexion` are never injected into the trading prompt.
 
 ---
 
@@ -266,12 +269,15 @@ Built into `core/web_surfer.py` and `core/sentiment_engine.py`:
 ### 7. Active Trailing Stop & Break-Even Manager
 Managed natively within `core/mt5_engine.py` on every candle cycle:
 * **Break-Even Lock**: When a position moves **+10.0 pips** into profit, Stop Loss is automatically modified to Entry Price + 1.0 pip (locking in a risk-free trade).
-* **Dynamic Trailing Stop**: When profit reaches **+15.0 pips**, Stop Loss trails behind market price with a 5.0-pip step.
+* **Dynamic Trailing Stop**: When profit reaches **+15.0 pips**, Stop Loss trails **10.0 pips** behind market price, updated whenever it can improve by at least the **2.0-pip** step.
 * Fully configurable in `config.json`:
   ```json
   "trailing_stop_enabled": true,
   "trailing_breakeven_pips": 10.0,
-  "trailing_step_pips": 5.0
+  "trailing_breakeven_lock_pips": 1.0,
+  "trailing_start_pips": 15.0,
+  "trailing_distance_pips": 10.0,
+  "trailing_step_pips": 2.0
   ```
 
 ---
@@ -296,8 +302,9 @@ Managed natively within `core/mt5_engine.py` on every candle cycle:
 
 ### 9. Continuous Learning & Reflexion Engine (`learning/`)
 * **Continuous Learner** (`continuous_learner.py`): Automatically captures user instructions, communication preferences, and trading rules into `learned_rules.md` and Supabase cloud.
-* **Post-Mortem Loss Reflexion**: Closed losing trades trigger an automated LLM post-mortem that identifies root cause and distills an imperative rule.
-* **Quality-Filtered Rules**: The `_load_learned_rules()` function in `agent_logic.py` uses markdown header parsing to separate curated, high-quality `### [CATEGORY]` rules from auto-generated noise. Only curated rules are injected into the LLM prompt.
+* **Post-Mortem Loss Reflexion**: Closed losing trades (enriched with entry, original SL/TP, exit type and hold time) trigger an LLM post-mortem. Its proposed rule is validated and **quarantined** in `learning/reflexion_candidates.jsonl`; it is never written to `learned_rules.md` or injected into prompts. Curated rules are added only by the daily audit. Processed tickets persist in `state/processed_tickets.json`, so a restart never re-reflects old losses.
+* **Post-Trade Cooldown**: `symbol_cooldown_minutes` runs from the trade's real close time.
+* **Quality-Filtered Rules**: See `learning/rules_loader.py` (shared by the trading prompt and the chat/assistant prompts).
 * **Supabase Cloud Sync**: Rules are saved to both local disk and the `forex_learned_rules` PostgreSQL table.
 * **Episodic Memory**: ChromaDB vector database stores historical trade episodes for similarity recall on future decisions.
 
@@ -390,9 +397,24 @@ python forex_local_agent/tests/test_mock_cycle.py
 | 3 | **Sentiment & Calendar Scraper**: Fetches live headlines and checks ForexFactory blackout |
 | 4 | **Ollama Qualitative Reasoning**: Verifies JSON schema compliance and parsing |
 | 5 | **Deterministic ATR Math**: Verifies SL floor (15.0 pips), 1:2 R:R, and lot sizing |
-| 6 | **Trailing Stop Manager**: Validates break-even lock and trailing stop modifications |
+| 6 | **Trailing Stop Manager**: Evaluates break-even / trailing logic on live positions with `order_send` intercepted (nothing reaches the broker) |
 | 7 | **Risk Wall Defenses**: Tests H1 trend wall, capacity wall, and spread wall |
 | 8 | **Currency Correlation Wall**: Validates portfolio exposure limits per currency |
+
+The whole mock cycle runs with `mt5.order_send` patched, so no test can open, close or modify a real position.
+
+### Offline Regression Tests
+```powershell
+python forex_local_agent/tests/test_cycle5_regressions.py   # rules loader, reflexion quarantine, MT5 server time, daily loss, tier-1 blackout, trailing config, chatbot
+python forex_local_agent/tests/test_daily_loss_stop.py
+python forex_local_agent/tests/test_chat_logger.py
+```
+
+### Daily Post-Mortem Report
+```powershell
+python forex_local_agent/maintenance/daily_report.py --hours 24
+```
+Prints and saves (to `reports/`, gitignored) win rate, payoff, profit factor, expectancy, peak-to-trough drawdown, breakdowns by symbol / direction / session / hour / confidence / exit type / spread / H1 alignment, cost drag, exposure, LLM health, risk-wall counts, counterfactual R for rejected signals, and the LLM vs follow-H1-trend vs always-WAIT baselines.
 
 ---
 
@@ -504,8 +526,12 @@ Located at `forex_local_agent/config.json`:
     "news_blackout_pre_mins": 30,
     "news_blackout_post_mins": 15,
     "trailing_stop_enabled": true,
+    "news_blackout_global_tier1": true,
     "trailing_breakeven_pips": 10.0,
-    "trailing_step_pips": 5.0,
+    "trailing_breakeven_lock_pips": 1.0,
+    "trailing_start_pips": 15.0,
+    "trailing_distance_pips": 10.0,
+    "trailing_step_pips": 2.0,
     "max_currency_exposure": 3,
     "daily_loss_limit_pct": 5.0
   },
@@ -529,7 +555,7 @@ Located at `forex_local_agent/config.json`:
 |---|---|---|
 | `fixed_lot` | `0.01` | Fixed lot size for all trades (micro-lot) |
 | `max_lot_size` | `0.1` | Hard ceiling on calculated lot size |
-| `max_drawdown_pct` | `2.0` | Maximum allowed drawdown percentage |
+| `max_drawdown_pct` | `2.0` | Per-trade cap: rejects a trade whose actual loss at SL (lot × SL distance) exceeds this % of balance. Not an account drawdown limit; see `daily_loss_limit_pct` |
 | `max_open_trades` | `10` | Maximum simultaneous open positions |
 | `confidence_threshold` | `0.80` | Minimum LLM confidence to trigger trade execution |
 | `min_sl_pips` | `15.0` | Minimum Stop Loss distance (pips) — prevents spread noise hits |
@@ -537,8 +563,13 @@ Located at `forex_local_agent/config.json`:
 | `symbol_cooldown_minutes` | `30` | Cooldown after a trade closes on a symbol (prevents revenge trading) |
 | `news_blackout_pre_mins` | `30` | Minutes before high-impact news to stop trading |
 | `news_blackout_post_mins` | `15` | Minutes after high-impact news to resume trading |
+| `news_blackout_global_tier1` | `true` | Tier-1 USD releases (NFP, CPI, Fed rate, FOMC) black out all symbols, not only USD pairs |
 | `trailing_breakeven_pips` | `10.0` | Pips in profit before auto-moving SL to breakeven |
-| `trailing_step_pips` | `5.0` | Pip step for trailing stop after breakeven |
+| `trailing_stop_enabled` | `true` | Master switch for the break-even / trailing manager |
+| `trailing_breakeven_lock_pips` | `1.0` | SL is moved to entry + this many pips at break-even |
+| `trailing_start_pips` | `15.0` | Profit (pips) at which trailing starts |
+| `trailing_distance_pips` | `10.0` | Distance of the trailing SL behind price |
+| `trailing_step_pips` | `2.0` | Minimum SL improvement before a trailing modification is sent |
 | `max_currency_exposure` | `3` | Max positions containing any single currency |
 | `daily_loss_limit_pct` | `5.0` | Max cumulative realized loss (% of balance) before halting all new entries for the UTC day |
 
