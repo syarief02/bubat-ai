@@ -23,7 +23,10 @@
     "news_blackout_post_mins": 15,
     "trailing_stop_enabled": true,
     "trailing_breakeven_pips": 10.0,
-    "trailing_step_pips": 5.0,
+    "trailing_breakeven_lock_pips": 1.0,
+    "trailing_start_pips": 15.0,
+    "trailing_distance_pips": 10.0,
+    "trailing_step_pips": 2.0,
     "max_currency_exposure": 3
   },
   "trading": {

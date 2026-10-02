@@ -14,7 +14,7 @@ import os
 import math
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from loguru import logger
 
@@ -25,6 +25,16 @@ except ImportError:
         from forex_local_agent.learning.skills.economic_calendar_filter import is_trade_permitted_by_calendar
     except ImportError:
         is_trade_permitted_by_calendar = None
+
+try:
+    from core.trade_analytics import classify_exit
+except ImportError:
+    from forex_local_agent.core.trade_analytics import classify_exit
+
+try:
+    from core.mt5_time import history_deals_utc, server_epoch_to_utc, get_server_utc_offset_seconds
+except ImportError:
+    from forex_local_agent.core.mt5_time import history_deals_utc, server_epoch_to_utc, get_server_utc_offset_seconds
 
 try:
     from learning.skills.currency_correlation_filter import is_trade_permitted_by_correlation
@@ -68,10 +78,14 @@ class MT5Engine:
         self.atr_multiplier_tp = risk.get("atr_multiplier_tp", 3.0)
         self.min_sl_pips = risk.get("min_sl_pips", 15.0)
         self.max_spread_pips = risk.get("max_spread_pips", 3.5)
+        self.trailing_enabled = risk.get("trailing_stop_enabled", True)
         self.breakeven_trigger_pips = risk.get("trailing_breakeven_pips", 10.0)
-        self.breakeven_lock_pips = 1.0
-        self.trailing_start_pips = 15.0
-        self.trailing_distance_pips = 10.0
+        self.breakeven_lock_pips = risk.get("trailing_breakeven_lock_pips", 1.0)
+        self.trailing_start_pips = risk.get("trailing_start_pips", 15.0)
+        self.trailing_distance_pips = risk.get("trailing_distance_pips", 10.0)
+        # Minimum SL improvement before a trailing modification is sent
+        self.trailing_step_pips = risk.get("trailing_step_pips", 2.0)
+        self.daily_loss_limit_pct = risk.get("daily_loss_limit_pct")
         self.min_account_balance_gold = 300.0
 
         # Trading settings
@@ -374,6 +388,8 @@ class MT5Engine:
             final_lot = max(vol_min, min(raw_lot, vol_max, self.max_lot_size))
 
         final_lot = round(final_lot, 2)
+        # Actual money lost if the SL is hit at this lot size (what the risk cap must check)
+        actual_risk = round(loss_per_lot * final_lot, 2)
 
         return {
             "status": "calculated",
@@ -387,8 +403,9 @@ class MT5Engine:
             "atr": round(atr_value, digits),
             "sl_distance": round(sl_distance, digits),
             "tp_distance": round(tp_distance, digits),
-            "risk_amount": round(risk_amount, 2),
-            "risk_reward_ratio": round(self.atr_multiplier_tp / self.atr_multiplier_sl, 2),
+            "risk_amount": actual_risk,
+            "risk_budget": round(risk_amount, 2),
+            "risk_reward_ratio": round(tp_distance / sl_distance, 2) if sl_distance > 0 else None,
         }
 
     def execute_trade(self, trade_params: Dict) -> Dict:
@@ -414,33 +431,10 @@ class MT5Engine:
             logger.warning(msg)
             return {"status": "rejected", "message": msg}
 
-        # Daily Loss Stop Wall
-        daily_loss_limit_pct = self.config.get("risk_parameters", {}).get("daily_loss_limit_pct")
-        if daily_loss_limit_pct is not None:
-            account_info = mt5.account_info()
-            if account_info is not None:
-                balance = account_info.balance
-                
-                from datetime import timezone
-                now_utc = datetime.now(timezone.utc)
-                start_of_day_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-                
-                deals = mt5.history_deals_get(start_of_day_utc, now_utc)
-                if deals is not None:
-                    realized_pnl = sum(deal.profit for deal in deals if deal.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT))
-                else:
-                    realized_pnl = 0.0
-                
-                if realized_pnl < 0:
-                    realized_loss = abs(realized_pnl)
-                    limit = balance * (daily_loss_limit_pct / 100.0)
-                    
-                    if realized_loss > limit:
-                        msg = f"REJECTED: Daily loss limit reached (${realized_loss:.2f} / ${limit:.2f})"
-                        logger.warning(msg)
-                        return {"status": "rejected", "message": msg}
-                    elif realized_loss > (limit * 0.5):
-                        logger.warning(f"WARNING: Daily loss is at {realized_loss:.2f}, approaching limit of {limit:.2f}!")
+        # Daily Loss Stop Wall (real UTC day, net of swap/commission)
+        daily_check = self.check_daily_loss_limit()
+        if daily_check is not None:
+            return daily_check
 
         open_positions = self.get_open_positions()
         if len(open_positions) >= self.max_open_trades:
@@ -500,7 +494,7 @@ class MT5Engine:
         max_allowed_risk = balance * (self.max_drawdown_pct / 100.0)
 
         if risk_amount > max_allowed_risk:
-            msg = f"REJECTED: Risk ${risk_amount:.2f} exceeds max drawdown allowed ${max_allowed_risk:.2f}"
+            msg = f"REJECTED: Risk at SL ${risk_amount:.2f} exceeds per-trade cap ${max_allowed_risk:.2f} ({self.max_drawdown_pct}% of balance)"
             logger.warning(msg)
             return {"status": "rejected", "message": msg}
 
@@ -566,6 +560,34 @@ class MT5Engine:
             "tp": tp,
         }
 
+    def get_realized_pnl_today_utc(self, now_utc: Optional[datetime] = None) -> float:
+        """Net realized P&L (profit + swap + commission + fee) of deals closed since 00:00 real UTC."""
+        now_utc = now_utc or datetime.now(timezone.utc)
+        start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        deals = history_deals_utc(start, now_utc + timedelta(minutes=1))
+        return float(sum(d.profit + d.swap + d.commission + getattr(d, "fee", 0.0)
+                         for d in deals if d.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT)))
+
+    def check_daily_loss_limit(self) -> Optional[Dict]:
+        """Return a rejection dict when today's realized loss exceeds daily_loss_limit_pct of balance."""
+        if self.daily_loss_limit_pct is None:
+            return None
+        account_info = mt5.account_info()
+        if account_info is None:
+            return None
+        realized_pnl = self.get_realized_pnl_today_utc()
+        if realized_pnl >= 0:
+            return None
+        realized_loss = abs(realized_pnl)
+        limit = account_info.balance * (self.daily_loss_limit_pct / 100.0)
+        if realized_loss > limit:
+            msg = f"REJECTED: Daily loss limit reached (${realized_loss:.2f} / ${limit:.2f})"
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
+        if realized_loss > (limit * 0.5):
+            logger.warning(f"WARNING: Daily loss is at {realized_loss:.2f}, approaching limit of {limit:.2f}!")
+        return None
+
     def get_open_positions(self) -> List[Dict]:
         positions = mt5.positions_get()
         if positions is None:
@@ -573,10 +595,58 @@ class MT5Engine:
         return [p._asdict() for p in positions]
 
     def check_closed_trades(self, since: datetime) -> List[Dict]:
-        deals = mt5.history_deals_get(since, datetime.now())
-        if deals is None:
-            return []
-        return [d._asdict() for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
+        """Exit deals closed since `since` (real UTC), enriched with entry/SL/TP facts.
+
+        Adds: close_time_utc (ISO), close_ts, entry_price, direction, orig_sl, orig_tp,
+        exit_type (TP / SL_FULL / BREAK_EVEN / TRAILING / MANUAL), pips, hold_minutes.
+        """
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        offset = get_server_utc_offset_seconds()
+        deals = history_deals_utc(since, datetime.now(timezone.utc) + timedelta(minutes=1), offset)
+        out = []
+        for d in deals:
+            if d.entry != mt5.DEAL_ENTRY_OUT:
+                continue
+            rec = d._asdict()
+            close_dt = server_epoch_to_utc(d.time, offset)
+            rec["close_time_utc"] = close_dt.isoformat()
+            rec["close_ts"] = close_dt.timestamp()
+            try:
+                rec.update(self._closed_trade_context(d, offset))
+            except Exception as e:
+                logger.debug(f"Could not enrich closed deal {d.ticket}: {e}")
+            out.append(rec)
+        return out
+
+    def _closed_trade_context(self, exit_deal, offset: int) -> Dict:
+        pos_deals = mt5.history_deals_get(position=exit_deal.position_id) or []
+        entry = next((x for x in pos_deals if x.entry == mt5.DEAL_ENTRY_IN), None)
+        if entry is None:
+            return {}
+        orders = mt5.history_orders_get(position=exit_deal.position_id) or []
+        open_order = next((o for o in orders if o.ticket == entry.order), None)
+        info = mt5.symbol_info(exit_deal.symbol)
+        pip = (info.point * 10 if info.digits in (3, 5) else info.point) if info else 0.0001
+        direction = 1 if entry.type == mt5.DEAL_TYPE_BUY else -1
+        orig_sl = float(open_order.sl) if open_order else 0.0
+        orig_tp = float(open_order.tp) if open_order else 0.0
+        pips = (exit_deal.price - entry.price) * direction / pip
+        exit_type = classify_exit(exit_deal.reason, exit_deal.price, entry.price, orig_sl, direction, pip)
+        entry_dt = server_epoch_to_utc(entry.time, offset)
+        return {
+            "direction": "BUY" if direction > 0 else "SELL",
+            "entry_price": entry.price,
+            "entry_time_utc": entry_dt.isoformat(),
+            "orig_sl": orig_sl,
+            "orig_tp": orig_tp,
+            "sl_pips": round(abs(entry.price - orig_sl) / pip, 1) if orig_sl else None,
+            "pips": round(pips, 1),
+            "exit_type": exit_type,
+            "hold_minutes": round((exit_deal.time - entry.time) / 60, 1),
+            "entry_hour_utc": entry_dt.hour,
+            "net_profit": round(sum(x.profit + x.swap + x.commission + getattr(x, "fee", 0.0) for x in pos_deals), 2),
+        }
 
     def manage_trailing_stops(self) -> List[Dict]:
         """
@@ -588,6 +658,8 @@ class MT5Engine:
         Returns a list of modification event dicts.
         """
         modifications = []
+        if not self.trailing_enabled:
+            return modifications
         open_positions = self.get_open_positions()
         if not open_positions:
             return modifications
@@ -623,7 +695,7 @@ class MT5Engine:
                     be_lock = self.breakeven_lock_pips * pip_size
                     trail_start = self.trailing_start_pips
                     trail_dist = self.trailing_distance_pips * pip_size
-                    step_size = 2.0 * pip_size
+                    step_size = self.trailing_step_pips * pip_size
 
                 new_sl = None
                 action_name = None
