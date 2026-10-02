@@ -19,6 +19,11 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 RULES_FILE = ROOT_DIR / "learning" / "learned_rules.md"
 
 try:
+    from learning.rules_loader import load_prompt_rules, CHAT_PROMPT_CAP
+except ImportError:
+    from forex_local_agent.learning.rules_loader import load_prompt_rules, CHAT_PROMPT_CAP
+
+try:
     from core.supabase_manager import SupabaseManager
 except ImportError:
     try:
@@ -47,10 +52,12 @@ class ContinuousLearner:
             self.rules_file.write_text(header, encoding="utf-8")
 
     def get_all_rules_text(self) -> str:
-        """Read all rules as formatted text for system prompt injection."""
+        """Curated rules (compact, capped) for chat/assistant system prompts.
+
+        Loss-reflexion output is excluded; the raw file can be tens of KB.
+        """
         self._ensure_rules_file()
-        content = self.rules_file.read_text(encoding="utf-8").strip()
-        return content
+        return load_prompt_rules(self.rules_file, cap=CHAT_PROMPT_CAP, exclude_categories={"REFLEXION"})
 
     def learn_rule(self, rule_text: str, category: str = "STRATEGY", source: str = "user_conversation") -> str:
         """

@@ -17,6 +17,11 @@ from loguru import logger
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from learning.rules_loader import load_prompt_rules, TRADING_PROMPT_CAP
+except ImportError:
+    from forex_local_agent.learning.rules_loader import load_prompt_rules, TRADING_PROMPT_CAP
+
 
 class TradeDecision(BaseModel):
     """Simplified qualitative output — no floating-point arithmetic allowed."""
@@ -105,53 +110,17 @@ class AgentLogic:
         self.ollama_url = self.config.get("ollama_base_url", "http://localhost:11434")
         self.default_model = self.config.get("active_model", "agent-brain:32k")
         self.rules_path = self.config_path.parent / "learning" / "learned_rules.md"
+        self.last_decision_meta: Dict[str, Any] = {}
+        self._last_parse_tier: Optional[int] = None
 
     def _load_learned_rules(self) -> str:
-        """Load learned rules, filtering for high-quality curated directives only.
-        
-        The rules file accumulates both curated (human/reflexion) and auto-generated
-        (post-mortem) rules. Only curated rules marked with ### headers or the
-        PORTFOLIO_CORRELATION rule are injected into the LLM prompt.
-        Auto-generated 'RULE #' entries from post-mortems are kept on disk for
-        audit trail but excluded from the prompt to prevent noise pollution.
+        """Curated ### [CATEGORY] rules only (no REFLEXION / COMMUNICATION), capped at whole rules.
+
+        See learning/rules_loader.py.
         """
         if self.rules_path.exists():
             try:
-                with open(self.rules_path, "r", encoding="utf-8") as f:
-                    content = f.read().strip()
-                
-                # Extract only curated high-quality rules (### headers or known critical rules)
-                curated_lines = []
-                lines = content.splitlines()
-                in_curated_block = False
-                
-                for line in lines:
-                    stripped = line.strip()
-                    # Curated rule headers start with ###
-                    if stripped.startswith("### ["):
-                        in_curated_block = True
-                        curated_lines.append(line)
-                    elif stripped.startswith("# ") or stripped.startswith("## ") or stripped == "---":
-                        # File-level headers, keep
-                        in_curated_block = False
-                        curated_lines.append(line)
-                    elif in_curated_block and stripped.startswith("- **"):
-                        curated_lines.append(line)
-                    elif in_curated_block and stripped == "":
-                        curated_lines.append(line)
-                        in_curated_block = False
-                    elif "PORTFOLIO_CORRELATION" in stripped:
-                        # Always include the correlation rule
-                        curated_lines.append(line)
-                
-                filtered = "\n".join(curated_lines).strip()
-                
-                # Safeguard: cap to 2500 chars max
-                if len(filtered) > 2500:
-                    flines = filtered.splitlines()
-                    filtered = "\n".join(flines[-40:])
-                
-                return filtered if filtered else ""
+                return load_prompt_rules(self.rules_path, cap=TRADING_PROMPT_CAP)
             except Exception as e:
                 logger.error(f"Failed to read learned rules: {e}")
         return ""
@@ -227,6 +196,7 @@ class AgentLogic:
             data = json.loads(json_str, strict=False)
             res = _normalize_trade_decision_dict(data)
             if res:
+                self._last_parse_tier = 1
                 return res
         except Exception:
             pass
@@ -248,6 +218,7 @@ class AgentLogic:
                         data = json.loads(repaired, strict=False)
                         res = _normalize_trade_decision_dict(data)
                         if res:
+                            self._last_parse_tier = 2
                             return res
         except Exception:
             pass
@@ -272,6 +243,7 @@ class AgentLogic:
             if extracted_data.get("decision"):
                 recovered = _normalize_trade_decision_dict(extracted_data)
                 if recovered:
+                    self._last_parse_tier = 3
                     return recovered
         except Exception:
             pass
@@ -281,6 +253,7 @@ class AgentLogic:
     # Ollama circuit breaker state
     _ollama_failures: int = 0
     _ollama_circuit_open_until: float = 0.0
+    breaker_openings: int = 0
 
     async def query_ollama(self, prompt: str, system_prompt: str, model: str = None) -> str:
         """Query Ollama with circuit breaker to prevent hammering when Ollama is down."""
@@ -324,6 +297,7 @@ class AgentLogic:
                     # After 5 consecutive failures, open circuit for 60 seconds
                     if AgentLogic._ollama_failures >= 5:
                         AgentLogic._ollama_circuit_open_until = _time.time() + 60.0
+                        AgentLogic.breaker_openings += 1
                         logger.warning(f"Ollama circuit breaker OPENED after {AgentLogic._ollama_failures} failures. Cooling down 60s.")
                         AgentLogic._ollama_failures = 0
                     logger.warning(f"Ollama query failed: {e}")
@@ -351,20 +325,33 @@ class AgentLogic:
 
         user_prompt += "Analyze the market direction and output your TradeDecision as JSON."
 
+        import time as _time
+        started = _time.time()
+        # Parse-health telemetry for the caller (logged to Supabase decision metadata)
+        self.last_decision_meta = {"attempts": 0, "parse_tier": None, "parse_failures": 0, "fallback": False,
+                                   "rules_chars": len(learned_rules)}
         max_retries = 3
         for attempt in range(max_retries):
             raw_response = ""
+            self.last_decision_meta["attempts"] = attempt + 1
             try:
+                self._last_parse_tier = None
                 raw_response = await self.query_ollama(user_prompt, system_prompt)
                 decision = self._parse_or_recover_trade_decision(raw_response)
                 if decision:
                     logger.info(f"[{sym}] Successfully parsed TradeDecision on attempt {attempt + 1}")
+                    self.last_decision_meta["parse_tier"] = self._last_parse_tier
+                    self.last_decision_meta["latency_s"] = round(_time.time() - started, 2)
                     return decision
                 raise ValueError(f"Could not parse or recover TradeDecision from response (len={len(raw_response)}).")
             except Exception as e:
                 preview = repr(raw_response)[:180] if raw_response else "EMPTY"
                 logger.warning(f"[{sym}] Failed to parse TradeDecision on attempt {attempt + 1}: {e} | Raw: {preview}")
+                self.last_decision_meta["parse_failures"] += 1
+                self.last_decision_meta["last_error"] = type(e).__name__
                 if attempt == max_retries - 1:
+                    self.last_decision_meta["fallback"] = True
+                    self.last_decision_meta["latency_s"] = round(_time.time() - started, 2)
                     logger.error(f"[{sym}] All {max_retries} attempts failed to obtain TradeDecision: {e}. Emitting defensive WAIT.")
                     return TradeDecision(
                         market_sentiment="NEUTRAL",
@@ -385,10 +372,14 @@ class AgentLogic:
             '  "lesson_learned": "string",\n'
             '  "new_rule": "string"\n'
             "}\n"
-            "Important: The system already has ATR-based SL/TP, 15-pip SL floor, trailing stops, H1 trend wall, currency correlation filter, spread wall, and news blackout filter.\n"
-            "The `new_rule` must be SPECIFIC to the symbol, session, or market condition (not generic advice).\n"
+            "Trade fields: direction, entry_price, exit_price, orig_sl/orig_tp (stops at entry), sl_pips, "
+            "pips (signed result), exit_type (SL_FULL = full stop hit, BREAK_EVEN, TRAILING, TP), hold_minutes, "
+            "entry_hour_utc, net_profit (account currency, NOT pips).\n"
+            "Important: Stop-loss, take-profit, trailing stops and lot size are computed by deterministic code and "
+            "are NOT yours to change. Never propose price levels or stop distances.\n"
+            "The `new_rule` must be about WHEN not to enter (symbol + session hour, trend context, news timing).\n"
             "The `new_rule` must start with an action verb and reference the specific symbol.\n"
-            "Bad example: 'Implement a stop-loss order' (already exists, useless).\n"
+            "Bad example: 'Set a stop-loss level of 208.320' (price levels are rejected automatically).\n"
             "Good example: 'Avoid SELL entries on GBPJPY during Tokyo session open (22:00-01:00 UTC) when RSI > 60'."
         )
         user_prompt = f"Trade Data: {json.dumps(trade_data, indent=2, default=str)}"

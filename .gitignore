@@ -9,3 +9,5 @@ chroma_db/
 *calendar_cache.json
 forex_local_agent/reports/
 logs/chat_sessions.log
+forex_local_agent/state/
+forex_local_agent/learning/reflexion_candidates.jsonl
