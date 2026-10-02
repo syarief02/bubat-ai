@@ -23,7 +23,7 @@ print("[PASS] mt5_engine.py contains daily loss stop wall code")
 
 # Verify it comes AFTER H1 trend wall and BEFORE capacity wall
 h1_pos = engine_code.find("Counter-trend")
-daily_pos = engine_code.find("daily_loss_limit_pct")
+daily_pos = engine_code.find("self.check_daily_loss_limit()")
 capacity_pos = engine_code.find("Max open trades")
 assert h1_pos < daily_pos < capacity_pos, \
     f"FAIL: Wall ordering wrong. H1={h1_pos} daily={daily_pos} capacity={capacity_pos}"

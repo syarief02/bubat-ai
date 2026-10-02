@@ -10,6 +10,7 @@ import sys
 import asyncio
 from pathlib import Path
 from loguru import logger
+from unittest.mock import patch, MagicMock
 
 # Add project root to sys.path
 root_dir = Path(__file__).resolve().parent.parent
@@ -85,7 +86,8 @@ async def run_sandboxed_dry_run():
     # 6. Test Trailing Stop & Break-Even Manager
     print(f"\n[STEP 6] Testing Active Trailing Stop Manager...")
     mods = mt5_eng.manage_trailing_stops()
-    print(f"Trailing Stop Manager executed successfully ({len(mods)} active positions modified).")
+    assert mods == [], "order_send is intercepted, so no modification may report success"
+    print("Trailing Stop Manager evaluated all positions (modifications intercepted, none sent).")
     
     # 7. Test Risk Wall Defenses
     print(f"\n[STEP 7] Testing Risk Wall Defenses...")
@@ -118,5 +120,14 @@ async def run_sandboxed_dry_run():
     print("DRY-RUN REGRESSION TEST COMPLETED: ALL ASSERTIONS PASSED (100% OK)")
     print("=" * 60)
 
+def main():
+    # Safety: this test talks to the live MT5 terminal. Block every order_send so
+    # neither execute_trade() nor the trailing-stop manager can touch the account.
+    guard = MagicMock(return_value=None)
+    with patch("core.mt5_engine.mt5.order_send", guard):
+        asyncio.run(run_sandboxed_dry_run())
+    print(f"order_send calls intercepted (never sent to broker): {guard.call_count}")
+
+
 if __name__ == "__main__":
-    asyncio.run(run_sandboxed_dry_run())
+    main()
