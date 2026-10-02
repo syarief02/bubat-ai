@@ -257,3 +257,118 @@ TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
 - BUY direction: 10W/15L (40%) vs SELL 54W/60L (47%). Investigate BUY signal quality next cycle
 - Trades/hour: 6.2 is high (149 trades/day). May indicate overtrading. Track spread+swap cost share
 - Ollama uptime: Two consecutive cycles with Ollama DOWN. Monitor reliability
+
+## [2026-10-03T02:25] 24-Hour Post-Mortem Cycle #5
+
+### TELEMETRY (24h window: 2026-10-01 17:39 UTC to 2026-10-02 17:39 UTC; broker server = UTC+3)
+NOTE: Cycle #4's stated window was wrong. Its report queried MT5 with plain UTC times, so it
+actually covered 2026-10-01 13:45 -> 2026-10-02 13:45 UTC (reproduced: 149 exits, gross -$15.27).
+This window overlaps cycle #4's real window by ~20h, so findings seen in both are NOT independent.
+- Closed Trades: 124 (53W / 71L / 0BE) | Win Rate: 42.7%
+- Gross P&L: -$39.21 | Swap: -$0.21 | Commission: $0.00 | Net: -$39.42 (-21.4% of $183.78 start balance)
+- Avg Winner: $0.94 | Avg Loser: -$1.26 | Payoff Ratio: 0.75 | Profit Factor: 0.56
+- Expectancy: -$0.318/trade (-0.25R) | Max Drawdown (peak-to-trough): -$39.95
+- Avg Hold: 98.5 min | Trades/Hour: 5.17
+- Account: $144.36 balance / $142.54 equity, 8 open positions (floating -$1.82)
+- Direction: SELL 83 (38.6% WR, -$35.66) | BUY 41 (51.2% WR, -$3.76)
+- Session: LONDON_NY_OVERLAP 49 trades -$32.18 | NEW_YORK 15 -$10.16 | ASIA 37 -$0.83 | LONDON 23 +$3.75
+- Exit types: SL_FULL 71 (-$89.33) | TRAILING 24 (+$16.69) | TP 16 (+$32.33) | BREAK_EVEN 13 (+$0.89)
+- Confidence: 112/124 trades at 0.80-0.84; LLM decisions 5,081 (BUY 1,831 / SELL 2,094 / WAIT 1,156),
+  67% of all decisions in the 0.80-0.84 bucket
+- H1 alignment at entry: 124/124 ALIGNED (wall working)
+- Cost drag: est. spread $5.56 + swap $0.21 = $5.77 (11.5% of gross wins); median spread 0.5p (3.9% of SL)
+- Exposure: max 10 concurrent positions; every currency peaked at the 3-position cap
+- LLM health: 0 defensive-WAIT fallbacks, 0 circuit-breaker openings, median cycle 63s (p90 79s);
+  intermediate parse failures were not persisted before this cycle (now instrumented)
+- Wall rejections: CAPACITY 1,839 | H1_TREND 1,034 | CORRELATION 283 | SPREAD 148 | DAILY_LOSS 59 |
+  NEWS 22 | GOLD 12
+- system_errors.log: 0 ERROR lines in window
+- Reflexion: 50 junk [REFLEXION] rules written in window (all after the 17:11 UTC restarts); 0 chat sessions
+- Services: MT5 OK, Ollama OK (agent-brain:32k), Supabase OK, webhook :5055 OK, SearXNG :8080 DOWN (RSS fallback)
+
+### ROOT-CAUSE FINDINGS
+1. [CONFIRMED] (4) MT5 server-time offset ignored everywhere. Deals are stamped in server time (UTC+3);
+   history queries passed real UTC. Evidence: a 6h query ending "now" returned 59 exits vs 73 when shifted.
+   Effects: post-close cooldown/reflexion fired >=3h after the close (cooldown never protected the
+   re-entry window); daily-loss wall used the server day and missed the last 3h; cycle #4 report mis-windowed.
+   Fix: core/mt5_time.py, all history queries shifted; daily loss = real UTC day, net.
+2. [CONFIRMED] (4) Reflexion junk reached the LLM prompt. Live prompt rules had 0 curated / 8 [REFLEXION]
+   rules, 3,782 chars (> 2,500 cap). Root cause: reflexion wrote "### [REFLEXION]" blocks that the loader
+   accepted; over the cap it kept the last 40 lines. Restarts re-reflected all losses (in-memory tickets).
+   Model output was nonsensical ("set a stop-loss level of 208.320") because it only saw the exit deal.
+   Fix: shared rules_loader (excludes REFLEXION/COMMUNICATION/loss_reflexion, whole-rule cap), reflexion
+   quarantined to reflexion_candidates.jsonl with a validator, processed tickets persisted, post-mortem
+   input enriched with entry/SL/TP/exit type.
+3. [LIKELY] (1) Tier-1 USD news blackout only covered USD pairs. NFP 2026-10-02 12:30 UTC: 17 non-USD
+   crosses entered 12:00-12:45, 5W/12L, net -$15.17 (38% of the window's loss). Fix: tier-1 USD events
+   (NFP, CPI, Fed rate, FOMC) black out all symbols. STRATEGY CHANGE #1 (stricter).
+4. [LIKELY] (2) The LLM shows no edge over a trivial baseline (simulated, hourly-deduplicated decision
+   points, same SL/TP geometry, no spread): LLM >=0.80 avg -0.073R (n=390); follow-H1-trend +0.013R (n=568);
+   always-WAIT 0. Confidence is uncalibrated: 0.85-0.89 -0.25R (n=10), >=0.90 -0.645R (n=9). Not acted on;
+   needs a second, independent window.
+5. [LIKELY] (3) Payoff asymmetry from trade management: losers run to the full SL (71 x -1.0R) while
+   winners average +0.75R. Of 37 BE/trailing exits, 17 would have reached TP and 15 the SL if unmanaged;
+   actual sum -31.24R vs unmanaged -17.54R (n=124, SL wins intrabar ties). Changing BE/trailing loosens
+   a protection -> NEEDS APPROVAL.
+6. [CONFIRMED] (3) Walls: H1-trend wall blocked losers (counterfactual -0.253R, n=301) and the spread wall
+   too (-0.314R, n=37). Capacity-blocked signals were +0.091R (n=382) -> HYPOTHESIS only.
+7. [CONFIRMED] (3) Dead/misleading config: trailing_stop_enabled and trailing_step_pips were never read
+   (step hardcoded 2p, README said 5p); max_drawdown_pct compared a notional 1.5% to 2% and always passed.
+   Fix: keys wired with defaults equal to live behaviour; risk cap now checks actual loss at SL.
+8. [CONFIRMED] (3) Daily-loss stop went live only at the 17:18 UTC restart (cycle #4 deploy); by then the
+   UTC-day realized loss was $29.63 vs a $7.22 limit. It has blocked every entry since (59 in window).
+9. [CONFIRMED] (4) tests/test_mock_cycle.py ran manage_trailing_stops() and execute_trade() against the
+   live account (could modify SL or open a real XAUUSD order). Fix: order_send intercepted for the run.
+10. [CONFIRMED] (5) Chatbot: assistant.bat launched a stale root local_assistant.py without chat logging;
+    chat get_account_status printed "#None (None)"; chat prompt said 8 pairs (scanner has 29) and
+    injected the raw 29KB rules file. All fixed.
+11. [HYPOTHESIS] (2) Session: LONDON_NY_OVERLAP + NEW_YORK 64 trades -$42.34 vs LONDON + ASIA 60 trades
+    +$2.92 (confounded by NFP) -> watchlist.
+
+### LESSONS / RULES
+- Added Rule #202610021800 [NEWS]: tier-1 USD releases black out all symbols (Supabase 65c3de99).
+- Pruned 50 [REFLEXION] junk rules (learned_rules.md back to curated content; never committed).
+- Trading prompt rules: 3,782 -> 1,674 chars, 0 -> 6 curated rules.
+
+### CODE CHANGES (rollback point 784f999)
+- 961d06d security: redact account number / admin email in tracked docs (history unchanged)
+- 3009a8a fix(mt5): server-time offset, daily-loss UTC net, closed-trade enrichment, trailing keys, risk at SL
+- 15e9545 fix(reflexion): curated loader, reflexion quarantine, persisted tickets, parse-health metadata
+- e1e7b29 feat(telemetry): decision metadata + flags, CYCLE_SUMMARY, logs/agent.log, rebuilt daily_report.py
+- d2bb2f0 fix(chatbot): assistant shim, account status, 29 pairs, absolute chat log path
+- fa4ec00 test: cycle #5 regression suite (31 tests); mock cycle order_send guard
+- e922edb feat(risk): tier-1 USD global news blackout (strategy change #1 of max 2)
+- 5f67fd4 docs: README
+
+### VERIFICATION
+- python -m compileall: 0 errors
+- tests/test_cycle5_regressions.py: 31/31 OK (caught and fixed a stale-tick offset bug before deploy)
+- tests/test_mock_cycle.py: 8/8 passed, 0 order_send calls attempted
+- tests/test_daily_loss_stop.py: 4/4 | tests/test_chat_logger.py: 10/10
+- chat.py smoke: get_account_status returned live balance/positions/today's P&L, logged to chat_sessions.log
+- Restart: main.py stopped 18:11:38 UTC, relaunched via run_agent.bat 18:11:46 (~8s down)
+- 3 post-restart cycles: 0 ERROR/CRITICAL, 0 parse failures, 0 defensive WAITs, parse tiers 1/2 only,
+  trailing sub-cycle ran (8 and 15 checks), daily-loss wall reports $29.63 (= report's UTC-day net),
+  reflexion went to quarantine only, Supabase decision metadata + CYCLE_SUMMARY rows present
+
+### NEEDS MY APPROVAL
+- Trade management (finding 5): e.g. raise break-even trigger from +10p to +15p and trail start from +15p
+  to +20p, or disable break-even; it loosens a protection. Re-test the unmanaged-vs-actual R gap on a
+  second, non-overlapping window first.
+- LLM gating (finding 4): if the LLM again underperforms follow-H1-trend next cycle, consider requiring
+  STRONG M5 structure or replacing LLM direction with the H1 baseline.
+- Git history rewrite to purge the MT5 account number and admin email (present in past commits).
+
+### WATCHLIST
+- Tier-1 blackout: entries within [-30m, +15m] of a tier-1 USD release must be 0 (next: US CPI/FOMC days).
+- Reflexion: 0 [REFLEXION] blocks in learned_rules.md; decision metadata rules_chars <= 2,500. The
+  post-mortem model parrots the prompt's example rule ("Tokyo session open ... RSI > 60") -> vary the example.
+- Server time: daily-loss wall amount must equal daily_report UTC-day net; CYCLE_SUMMARY skipped_cooldown > 0
+  within 30 min of closes.
+- LLM vs baselines: LLM >=0.80 avg R vs follow-H1 on a non-overlapping window; 2nd underperformance = CONFIRMED.
+- Confidence calibration: share of decisions in 0.80-0.84 (now 67%); WR by bucket.
+- Payoff: actual vs unmanaged sum R gap (now -13.7R per 124 trades).
+- Parse health: tier-2 repairs ~20-25% of decisions in first cycles (5/21, 4/21, 6/21).
+- USDJPY: 6 trades, 2W/4L, -$3.20 (prompt-only 0.85 rule is not enforceable by the LLM).
+- Sessions: overlap + NY vs London + Asia net (hypothesis, NFP-confounded).
+- SearXNG still down (3rd consecutive cycle).
