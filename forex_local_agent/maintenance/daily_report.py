@@ -327,7 +327,9 @@ def simulate_signals(signals: List[Dict], bars: BarCache, start_utc, end_utc, of
         idx = np.searchsorted(b["t_utc"], s["ts"], side="right") - 1  # bar containing the signal
         if idx < 15 or idx >= len(b["t_utc"]) - 1:
             continue
-        entry = s.get("entry") or float(b["close"][idx])
+        # The bar containing the signal is still forming at decision time; its close is
+        # future information. Enter at the next bar's open (first price actually tradable).
+        entry = s.get("entry") or float(b["open"][idx + 1])
         sl, tp = s.get("sl"), s.get("tp")
         if not sl or not tp:
             atr = float(b["atr"][idx - 1])  # last completed bar
@@ -622,7 +624,7 @@ def collect_report(hours: float = 24.0, use_supabase: bool = True, sim: bool = T
                 idx = np.searchsorted(b["t_utc"], p["ts"], side="right") - 1
                 if idx < 0:
                     continue
-                trend = bars.h1_trend_at(p["symbol"], p["ts"], float(b["close"][idx]), start_utc, end_utc)
+                trend = bars.h1_trend_at(p["symbol"], p["ts"], float(b["close"][idx - 1]) if idx > 0 else float(b["open"][idx]), start_utc, end_utc)
                 p["h1"] = trend
                 tdir = 1 if "BULLISH" in trend else (-1 if "BEARISH" in trend else 0)
                 if tdir:
