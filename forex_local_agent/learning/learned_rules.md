@@ -31,4 +31,3 @@
 - **Date**: 2026-10-03 00:50:00 UTC
 - **Source**: 24h_post_mortem_cycle4
 - **Directive**: Account-level daily loss stop is enforced at 5% of balance. When cumulative realized losses for the UTC day exceed this threshold, all new trade entries are blocked until the next UTC day. This prevents catastrophic drawdown spirals.
-

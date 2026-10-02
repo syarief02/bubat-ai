@@ -7,6 +7,7 @@ from typing import Optional, Dict
 from loguru import logger
 from pathlib import Path
 import json
+import os
 import uvicorn
 from datetime import datetime
 
@@ -14,7 +15,7 @@ class OpenClawBridge:
     def __init__(self, config_path: str):
         self.config_path = Path(config_path)
         self.webhook_port = 5055
-        self.admin_email = "hello@syariefazman.com"
+        self.admin_email = os.environ.get("ADMIN_EMAIL", "")
         self.openclaw_url = "http://localhost:3000"
         self.whatsapp_number = ""
         self.smtp_host = "localhost"
@@ -28,7 +29,7 @@ class OpenClawBridge:
                 with open(self.config_path, "r") as f:
                     config = json.load(f)
                     self.webhook_port = config.get("openclaw_webhook_port", self.webhook_port)
-                    self.admin_email = config.get("alerts", {}).get("admin_email", self.admin_email)
+                    self.admin_email = self.admin_email or config.get("alerts", {}).get("admin_email", "")
                     self.whatsapp_enabled = config.get("alerts", {}).get("whatsapp_enabled", True)
             except Exception as e:
                 logger.error(f"Failed to load config: {e}")

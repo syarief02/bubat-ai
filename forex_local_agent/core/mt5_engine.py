@@ -10,6 +10,7 @@ import MetaTrader5 as mt5
 import pandas as pd
 import pandas_ta as ta
 import json
+import os
 import math
 import time
 from pathlib import Path
@@ -80,11 +81,12 @@ class MT5Engine:
         self.order_comment = trading.get("order_comment", "Bubat AI")
 
     def initialize(self) -> bool:
+        # Read MT5 credentials from env vars first, config.json as fallback
         creds = self.config.get("mt5_credentials", {})
-        path = creds.get("path", r"C:\Program Files\MetaTrader 5\terminal64.exe")
-        login = creds.get("login")
-        server = creds.get("server")
-        password = creds.get("password")
+        path = os.environ.get("MT5_PATH") or creds.get("path", r"C:\Program Files\MetaTrader 5\terminal64.exe")
+        login = os.environ.get("MT5_LOGIN") or creds.get("login")
+        server = os.environ.get("MT5_SERVER") or creds.get("server")
+        password = os.environ.get("MT5_PASSWORD") or creds.get("password")
 
         init_kwargs = {}
         if path and Path(path).exists():

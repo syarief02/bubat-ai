@@ -4,12 +4,8 @@
   "searxng_url": "http://localhost:8080",
   "open_webui_url": "http://localhost:3000",
   "openclaw_webhook_port": 5055,
-  "mt5_credentials": {
-    "login": 25360772,
-    "password": "",
-    "server": "Tickmill-Demo",
-    "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
-  },
+  "mt5_credentials_note": "MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, MT5_PATH are loaded from .env",
+
   "risk_parameters": {
     "lot_mode": "fixed",
     "fixed_lot": 0.01,
@@ -74,7 +70,7 @@
     "max_response_latency_seconds": 60
   },
   "alerts": {
-    "admin_email": "hello@syariefazman.com",
+    "admin_email_note": "ADMIN_EMAIL loaded from .env",
     "whatsapp_enabled": true
   },
   "memory": {
