@@ -53,6 +53,8 @@ class SupabaseManager:
         reasoning: str,
         trade_params: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        approved: bool = False,
+        executed: bool = False,
     ) -> Optional[str]:
         """
         Log an LLM qualitative decision and ATR parameters into forex_trade_decisions table.
@@ -63,8 +65,8 @@ class SupabaseManager:
             "confidence": float(confidence * 100) if confidence <= 1.0 else float(confidence),
             "market_sentiment": market_sentiment,
             "reasoning": reasoning,
-            "approved": False,
-            "executed": False,
+            "approved": bool(approved),
+            "executed": bool(executed),
             "metadata": metadata or {},
         }
 

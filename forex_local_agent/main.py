@@ -33,6 +33,8 @@ from learning.memory_manager import MemoryManager
 from learning.skill_factory import SkillFactory
 from maintenance.model_updater import ModelUpdater
 from core.supabase_manager import SupabaseManager
+from learning.reflexion_store import ReflexionStore, validate_reflexion_rule
+from core.trade_analytics import wall_from_message
 
 # ── Logging Configuration ────────────────────────────────────────────────────
 logger.remove()
@@ -42,6 +44,8 @@ logger.add(
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
 )
 logger.add("logs/system_errors.log", rotation="10 MB", level="ERROR", backtrace=True, diagnose=True)
+logger.add("logs/agent.log", rotation="10 MB", retention=5, level="INFO", encoding="utf-8",
+           filter=lambda record: "trade" not in record.get("extra", {}))
 logger.add("logs/trades.log", rotation="10 MB", level="INFO", filter=lambda record: "trade" in record.get("extra", {}))
 
 
@@ -80,7 +84,10 @@ class ForexAgent:
         # Symbol cooldown management to prevent revenge-trading
         self.symbol_cooldowns: dict[str, datetime] = {}
         self.cooldown_minutes = self.config.get("risk_parameters", {}).get("symbol_cooldown_minutes", 30)
-        self.processed_closed_tickets: set[int] = set()
+        # Persisted across restarts so a restart never re-runs reflexion on old losses
+        self.reflexion_store = ReflexionStore(Path(__file__).resolve().parent)
+        self.processed_closed_tickets: set[int] = self.reflexion_store.load_processed_tickets()
+        self.cycle_stats: Dict[str, Any] = {}
 
         # Register signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -147,9 +154,7 @@ class ForexAgent:
                 else:
                     del self.symbol_cooldowns[symbol]
 
-            # a. Load learned rules
-            rules_path = Path("learning/learned_rules.md")
-            learned_rules = rules_path.read_text(encoding="utf-8") if rules_path.exists() else ""
+            # a. Learned rules are loaded (curated + capped) inside AgentLogic.get_trade_decision
 
             # b. Get technical data from MT5
             logger.info(f"[{symbol}] Fetching technical data...")
@@ -268,7 +273,9 @@ class ForexAgent:
             else:
                 logger.info(f"[{symbol}] Decision is WAIT or confidence below threshold. No action.")
 
-            # Sync decision to Supabase
+            # Sync decision to Supabase (metadata feeds the daily post-mortem report)
+            outcome = self._classify_outcome(decision, trade_params, approved, result)
+            self._record_cycle_outcome(outcome, decision)
             self.supabase.log_decision(
                 symbol=symbol,
                 decision=decision.decision,
@@ -276,6 +283,17 @@ class ForexAgent:
                 market_sentiment=decision.market_sentiment,
                 reasoning=decision.reasoning,
                 trade_params=trade_params if (decision.decision != "WAIT" and trade_params and trade_params.get("status") != "error") else None,
+                metadata={
+                    "outcome": outcome,
+                    "h1_trend": tech_data.get("higher_timeframe_h1"),
+                    "m5_bias": tech_data.get("technical_bias"),
+                    "rsi": tech_data.get("rsi"),
+                    "atr": tech_data.get("atr"),
+                    "price": tech_data.get("current_price"),
+                    "llm": dict(getattr(self.agent_logic, "last_decision_meta", {}) or {}),
+                },
+                approved=bool(approved),
+                executed=bool(result and result.get("status") == "success"),
             )
 
             # h. Store episode in memory
@@ -329,6 +347,38 @@ class ForexAgent:
                 "h1_trend": "-",
                 "status": f"ERROR: {str(e)[:40]}"
             }
+
+    # ── Cycle Telemetry ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _classify_outcome(decision, trade_params, approved, result) -> str:
+        if decision.decision == "WAIT":
+            return "WAIT"
+        if trade_params is None:
+            return "BELOW_THRESHOLD"
+        if trade_params.get("status") == "error":
+            return "PARAM_ERROR"
+        if not approved:
+            return "NOT_APPROVED"
+        if result and result.get("status") == "success":
+            return "EXECUTED"
+        if result and result.get("status") == "rejected":
+            return "REJECTED:" + wall_from_message(result.get("message", ""))
+        return "ORDER_FAILED"
+
+    def _record_cycle_outcome(self, outcome: str, decision):
+        st = self.cycle_stats
+        st.setdefault("outcomes", {})
+        st["outcomes"][outcome] = st["outcomes"].get(outcome, 0) + 1
+        st.setdefault("mix", {})
+        st["mix"][decision.decision] = st["mix"].get(decision.decision, 0) + 1
+        meta = getattr(self.agent_logic, "last_decision_meta", {}) or {}
+        st["parse_failures"] = st.get("parse_failures", 0) + int(meta.get("parse_failures", 0))
+        st["defensive_waits"] = st.get("defensive_waits", 0) + int(bool(meta.get("fallback")))
+        tier = meta.get("parse_tier")
+        if tier:
+            st.setdefault("parse_tiers", {})
+            st["parse_tiers"][str(tier)] = st["parse_tiers"].get(str(tier), 0) + 1
 
     # ── Cycle Summary Table ───────────────────────────────────────────────
 
@@ -423,64 +473,49 @@ class ForexAgent:
     # ── Reflexion: Learn from Closed Trades ───────────────────────────────
 
     async def check_closed_trades(self):
-        """Check recently closed trades and trigger reflexion on losses."""
+        """Apply post-close cooldowns and run reflexion on newly closed losses.
+
+        Cooldowns run from the real close time (MT5 server-time offset handled in
+        mt5_engine). Reflexion output is quarantined in learning/reflexion_candidates.jsonl
+        and never injected into the trading prompt; curated rules come only from audits.
+        """
         try:
-            since = datetime.now(timezone.utc) - timedelta(hours=2)
+            now = datetime.now(timezone.utc)
+            since = now - timedelta(hours=2)
             closed_trades = self.mt5_engine.check_closed_trades(since)
 
             for trade in closed_trades:
+                sym = trade.get("symbol")
+                close_ts = trade.get("close_ts")
+                if sym and close_ts:
+                    until = datetime.fromtimestamp(close_ts, tz=timezone.utc) + timedelta(minutes=self.cooldown_minutes)
+                    if until > now and (sym not in self.symbol_cooldowns or self.symbol_cooldowns[sym] < until):
+                        self.symbol_cooldowns[sym] = until
+                        logger.info(f"[{sym}] Cooldown until {until.strftime('%H:%M')} UTC ({self.cooldown_minutes}m after close).")
+
                 ticket = trade.get("ticket")
                 if not ticket or ticket in self.processed_closed_tickets:
                     continue
                 self.processed_closed_tickets.add(ticket)
+                self.reflexion_store.mark_processed(ticket, close_ts)
 
-                sym = trade.get("symbol")
-                if sym:
-                    self.symbol_cooldowns[sym] = datetime.now(timezone.utc) + timedelta(minutes=self.cooldown_minutes)
-                    logger.info(f"[{sym}] Placed on {self.cooldown_minutes}m post-trade cooldown.")
-
-                profit = trade.get("profit", 0)
+                profit = trade.get("net_profit", trade.get("profit", 0))
                 if profit < 0:
-                    logger.info(f"Loss detected on trade {trade.get('ticket')}, triggering reflexion...")
-
-                    # Generate post-mortem via LLM
-                    post_mortem = await self.agent_logic.generate_post_mortem(trade)
-
-                    # Validate and append new rule to learned_rules.md
-                    rule_text = post_mortem.new_rule.strip()
-                    rule_lower = rule_text.lower()
-                    
-                    invalid_phrases = ['implement a stop-loss', 'ensure sufficient volume', 'always ensure', 'implement a volume check']
-                    
-                    if len(rule_text) > 20 and not any(phrase in rule_lower for phrase in invalid_phrases):
-                        rules_path = Path("learning/learned_rules.md")
-                        now = datetime.now(timezone.utc)
-                        formatted_rule = (
-                            f"\n### [REFLEXION] Rule #{now.strftime('%Y%m%d%H%M')}\n"
-                            f"- **Date**: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
-                            f"- **Source**: loss_reflexion\n"
-                            f"- **Directive**: [{post_mortem.trade_symbol}] {rule_text} (Root cause: {post_mortem.root_cause}. Lesson: {post_mortem.lesson_learned})\n"
-                        )
-                        
-                        with open(rules_path, "a", encoding="utf-8") as f:
-                            f.write(formatted_rule)
-                        logger.info(f"Reflexion rule added: {rule_text}")
-                        
-                        if rules_path.stat().st_size > 100 * 1024:
-                            with open(rules_path, "r", encoding="utf-8") as f:
-                                lines = f.readlines()
-                            with open(rules_path, "w", encoding="utf-8") as f:
-                                f.writelines(lines[:30])
-                            logger.warning("learned_rules.md exceeded 100KB, truncated below line 30.")
-                    else:
-                        logger.debug(f"Reflexion rule failed validation: {rule_text}")
-
-                    # Store outcome in memory
+                    logger.info(f"Loss detected on trade {ticket} ({trade.get('exit_type', '?')}), triggering reflexion...")
+                    facts = {k: trade.get(k) for k in (
+                        "symbol", "direction", "entry_price", "price", "orig_sl", "orig_tp", "sl_pips", "pips",
+                        "exit_type", "hold_minutes", "entry_hour_utc", "entry_time_utc", "close_time_utc", "net_profit")}
+                    facts["exit_price"] = facts.pop("price")
+                    post_mortem = await self.agent_logic.generate_post_mortem(facts)
+                    valid, why = validate_reflexion_rule(post_mortem.new_rule)
+                    self.reflexion_store.add_candidate(facts, post_mortem.model_dump(), valid, why)
+                    logger.info(f"Reflexion candidate stored (valid={valid}, {why}): {post_mortem.new_rule[:120]}")
                     await self.memory.store_trade_outcome(trade, post_mortem.outcome, profit)
                 else:
                     # Also store winning trades for balanced memory
                     await self.memory.store_trade_outcome(trade, "WIN", profit)
 
+            self.reflexion_store.save_processed()
         except Exception as e:
             logger.error(f"Error checking closed trades: {e}", exc_info=True)
 
@@ -536,6 +571,8 @@ class ForexAgent:
         while sleep_seconds > 0 and self.running:
             try:
                 mods = self.mt5_engine.manage_trailing_stops()
+                self.cycle_stats["trailing_checks"] = self.cycle_stats.get("trailing_checks", 0) + 1
+                self.cycle_stats["trailing_mods"] = self.cycle_stats.get("trailing_mods", 0) + len(mods)
                 for m in mods:
                     self.supabase.log_telemetry("MT5Engine", "TRAILING_STOP_UPDATE", m, status="SUCCESS")
             except Exception as e:
@@ -596,6 +633,9 @@ class ForexAgent:
                         logger.info("═══════════════════════════════════════════════")
 
                     # 1. Analyze each configured symbol
+                    cycle_started = time.time()
+                    prev_trailing = {k: self.cycle_stats.get(k, 0) for k in ("trailing_checks", "trailing_mods")}
+                    self.cycle_stats = {}
                     cycle_results = []
                     for symbol in self.symbols:
                         if not self.running:
@@ -606,6 +646,18 @@ class ForexAgent:
 
                     # 2. Check for recently closed trades and learn from losses FIRST
                     await self.check_closed_trades()
+
+                    # Cycle telemetry (trailing counts cover the previous sleep window)
+                    self.cycle_stats["cycle_seconds"] = round(time.time() - cycle_started, 1)
+                    self.cycle_stats["symbols"] = len(cycle_results)
+                    self.cycle_stats["skipped_open"] = sum(1 for r in cycle_results if str(r.get("status", "")).startswith("ACTIVE"))
+                    self.cycle_stats["skipped_cooldown"] = sum(1 for r in cycle_results if r.get("decision") == "COOLDOWN")
+                    self.cycle_stats["errors"] = sum(1 for r in cycle_results if r.get("decision") == "ERROR")
+                    self.cycle_stats["breaker_openings_total"] = AgentLogic.breaker_openings
+                    self.cycle_stats.update({f"prev_{k}": v for k, v in prev_trailing.items()})
+                    logger.info(f"Cycle stats: {json.dumps(self.cycle_stats, default=str)}")
+                    self.supabase.log_telemetry("ForexAgent", "CYCLE_SUMMARY", dict(self.cycle_stats), status="SUCCESS")
+                    self.cycle_stats = {}
 
                     # 3. Calculate next candle timing
                     next_close, sleep_seconds = self.get_next_candle_info()
