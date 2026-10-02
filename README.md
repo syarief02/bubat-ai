@@ -268,14 +268,14 @@ Built into `core/web_surfer.py` and `core/sentiment_engine.py`:
 
 ### 7. Active Trailing Stop & Break-Even Manager
 Managed natively within `core/mt5_engine.py` on every candle cycle:
-* **Break-Even Lock**: When a position moves **+10.0 pips** into profit, Stop Loss is automatically modified to Entry Price + 1.0 pip (locking in a risk-free trade).
-* **Dynamic Trailing Stop**: When profit reaches **+15.0 pips**, Stop Loss trails **10.0 pips** behind market price, updated whenever it can improve by at least the **2.0-pip** step.
+* **Break-Even Lock**: When a position moves **+15.0 pips** into profit, Stop Loss is automatically modified to Entry Price + 1.0 pip (locking in a risk-free trade).
+* **Dynamic Trailing Stop**: When profit reaches **+20.0 pips**, Stop Loss trails **10.0 pips** behind market price, updated whenever it can improve by at least the **2.0-pip** step.
 * Fully configurable in `config.json`:
   ```json
   "trailing_stop_enabled": true,
-  "trailing_breakeven_pips": 10.0,
+  "trailing_breakeven_pips": 15.0,
   "trailing_breakeven_lock_pips": 1.0,
-  "trailing_start_pips": 15.0,
+  "trailing_start_pips": 20.0,
   "trailing_distance_pips": 10.0,
   "trailing_step_pips": 2.0
   ```
@@ -527,9 +527,9 @@ Located at `forex_local_agent/config.json`:
     "news_blackout_post_mins": 15,
     "trailing_stop_enabled": true,
     "news_blackout_global_tier1": true,
-    "trailing_breakeven_pips": 10.0,
+    "trailing_breakeven_pips": 15.0,
     "trailing_breakeven_lock_pips": 1.0,
-    "trailing_start_pips": 15.0,
+    "trailing_start_pips": 20.0,
     "trailing_distance_pips": 10.0,
     "trailing_step_pips": 2.0,
     "max_currency_exposure": 3,
@@ -564,10 +564,10 @@ Located at `forex_local_agent/config.json`:
 | `news_blackout_pre_mins` | `30` | Minutes before high-impact news to stop trading |
 | `news_blackout_post_mins` | `15` | Minutes after high-impact news to resume trading |
 | `news_blackout_global_tier1` | `true` | Tier-1 USD releases (NFP, CPI, Fed rate, FOMC) black out all symbols, not only USD pairs |
-| `trailing_breakeven_pips` | `10.0` | Pips in profit before auto-moving SL to breakeven |
+| `trailing_breakeven_pips` | `15.0` | Pips in profit before auto-moving SL to breakeven |
 | `trailing_stop_enabled` | `true` | Master switch for the break-even / trailing manager |
 | `trailing_breakeven_lock_pips` | `1.0` | SL is moved to entry + this many pips at break-even |
-| `trailing_start_pips` | `15.0` | Profit (pips) at which trailing starts |
+| `trailing_start_pips` | `20.0` | Profit (pips) at which trailing starts |
 | `trailing_distance_pips` | `10.0` | Distance of the trailing SL behind price |
 | `trailing_step_pips` | `2.0` | Minimum SL improvement before a trailing modification is sent |
 | `max_currency_exposure` | `3` | Max positions containing any single currency |
