@@ -26,7 +26,7 @@ EMAIL_PATTERN = re.compile(
 # Sequences of 8 or more digits (account numbers, numeric IDs, etc.)
 DIGITS_PATTERN = re.compile(r"\d{8,}")
 
-DEFAULT_LOG_FILE = "logs/chat_sessions.log"
+DEFAULT_LOG_FILE = Path(__file__).resolve().parent / "logs" / "chat_sessions.log"
 
 
 def scrub_secrets(text: Optional[str]) -> str:

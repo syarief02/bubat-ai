@@ -34,9 +34,9 @@ from core.market_scanner import MarketScanner
 from learning.continuous_learner import ContinuousLearner
 
 try:
-    from forex_local_agent.chat_logger import log_chat_event, scrub_secrets
+    from forex_local_agent.chat_logger import log_chat_event, scrub_secrets, DEFAULT_LOG_FILE
 except ImportError:
-    from chat_logger import log_chat_event, scrub_secrets
+    from chat_logger import log_chat_event, scrub_secrets, DEFAULT_LOG_FILE
 
 try:
     from core.mt5_engine import MT5Engine
@@ -138,12 +138,22 @@ class ChatToolExecutor:
             return "Could not connect to MT5 terminal."
         try:
             acct = engine.get_account_info()
+            if not acct:
+                return "Could not read MT5 account info."
             positions = engine.get_open_positions()
-            return (
-                f"MT5 Account: #{acct.get('login')} ({acct.get('server')})\n"
-                f"Balance: ${acct.get('balance'):.2f} | Equity: ${acct.get('equity'):.2f} | Free Margin: ${acct.get('free_margin'):.2f}\n"
-                f"Open Positions: {len(positions)}"
-            )
+            floating = sum(p.get("profit", 0.0) + p.get("swap", 0.0) for p in positions)
+            lines = [
+                f"Balance: ${acct['balance']:.2f} | Equity: ${acct['equity']:.2f} | Free Margin: ${acct['free_margin']:.2f}",
+                f"Open Positions: {len(positions)} | Floating P&L: ${floating:.2f}",
+            ]
+            for p in positions:
+                side = "BUY" if p.get("type") == 0 else "SELL"
+                lines.append(f"- {p.get('symbol')} {side} {p.get('volume')} lot, P&L ${p.get('profit', 0.0):.2f}")
+            try:
+                lines.append(f"Today's realized P&L (UTC day): ${engine.get_realized_pnl_today_utc():.2f}")
+            except Exception:
+                pass
+            return "\n".join(lines)
         finally:
             engine.shutdown()
 
@@ -154,7 +164,7 @@ class IntelligentForexChat:
     def __init__(self, model: str = DEFAULT_MODEL, log_file: Optional[Union[str, Path]] = None):
         self.model = model
         self.session_id = str(uuid.uuid4())
-        self.log_file = log_file or "logs/chat_sessions.log"
+        self.log_file = log_file or DEFAULT_LOG_FILE
         self.executor = ChatToolExecutor()
         self.conversation_history: List[Dict[str, str]] = []
         self._build_system_prompt()
@@ -184,7 +194,7 @@ ABSOLUTE OPERATIONAL MANDATES:
 4. When asked to remember or learn something, call `learn_new_rule` to store it permanently.
 
 AVAILABLE TOOLS:
-- scan_market_pairs(): Scan all live MT5 pairs (EURUSD, USDJPY, GBPUSD, AUDUSD, NZDUSD, EURJPY, GBPJPY, XAUUSD), compute RSI, ATR, EMAs, 24h change %, and rank them by opportunity for the active session.
+- scan_market_pairs(): Scan all {len(self.executor.scanner.symbols)} configured MT5 instruments (28 forex pairs + XAUUSD), compute RSI, ATR, EMAs, 24h change %, and rank them by opportunity for the active session.
 - search_live_web(query: str): Search live financial news, Google News RSS, and economic headlines.
 - scrape_webpage(url: str): Read any web page in full text.
 - get_pair_technicals(symbol: str): Deep dive into indicators for a specific pair.

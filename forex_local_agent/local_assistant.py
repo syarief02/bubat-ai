@@ -39,15 +39,17 @@ if sys.platform == "win32":
         pass
 
 # Paths & Environment
-WORKSPACE_DIR = Path(__file__).resolve().parent
+_HERE = Path(__file__).resolve().parent
+# Canonical copy lives in forex_local_agent/; the repo-root local_assistant.py is a launcher shim
+WORKSPACE_DIR = _HERE.parent if _HERE.name == "forex_local_agent" else _HERE
 AGENT_DIR = WORKSPACE_DIR / "forex_local_agent"
 sys.path.insert(0, str(WORKSPACE_DIR))
 sys.path.insert(0, str(AGENT_DIR))
 
 try:
-    from forex_local_agent.chat_logger import log_chat_event, scrub_secrets
+    from forex_local_agent.chat_logger import log_chat_event, scrub_secrets, DEFAULT_LOG_FILE
 except ImportError:
-    from chat_logger import log_chat_event, scrub_secrets
+    from chat_logger import log_chat_event, scrub_secrets, DEFAULT_LOG_FILE
 
 from dotenv import load_dotenv
 
@@ -285,7 +287,7 @@ class ToolExecutor:
                 acct = mt5.account_info()
                 positions = mt5.positions_total()
                 if acct:
-                    parts.append(f"MT5 Account: #{acct.login} ({acct.server}) | Balance: ${acct.balance:.2f} | Equity: ${acct.equity:.2f} | Open Positions: {positions}")
+                    parts.append(f"MT5 Account ({acct.server}) | Balance: ${acct.balance:.2f} | Equity: ${acct.equity:.2f} | Open Positions: {positions}")
                 mt5.shutdown()
             else:
                 parts.append("MT5 Terminal: Not connected")
@@ -327,7 +329,7 @@ class BubatAutonomousAgent:
     def __init__(self, model: str = DEFAULT_MODEL, auto_confirm: bool = False, log_file: Optional[Union[str, Path]] = None):
         self.model = model
         self.session_id = str(uuid.uuid4())
-        self.log_file = log_file or "logs/chat_sessions.log"
+        self.log_file = log_file or DEFAULT_LOG_FILE
         self.executor = ToolExecutor(auto_confirm=auto_confirm)
         self.conversation_history: List[Dict[str, str]] = []
         self._init_system_prompt()
