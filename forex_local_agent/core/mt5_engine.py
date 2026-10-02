@@ -27,9 +27,9 @@ except ImportError:
         is_trade_permitted_by_calendar = None
 
 try:
-    from core.trade_analytics import classify_exit
+    from core.trade_analytics import classify_exit, spread_to_sl_ratio, entry_window_open
 except ImportError:
-    from forex_local_agent.core.trade_analytics import classify_exit
+    from forex_local_agent.core.trade_analytics import classify_exit, spread_to_sl_ratio, entry_window_open
 
 try:
     from core.mt5_time import history_deals_utc, server_epoch_to_utc, get_server_utc_offset_seconds
@@ -87,6 +87,10 @@ class MT5Engine:
         self.trailing_step_pips = risk.get("trailing_step_pips", 2.0)
         self.daily_loss_limit_pct = risk.get("daily_loss_limit_pct")
         self.global_news_blackout = risk.get("news_blackout_global_tier1", True)
+        # Execution-quality walls (cycle #6). None disables each one.
+        self.max_spread_sl_ratio = risk.get("max_spread_sl_ratio")
+        self.max_confidence = risk.get("max_confidence")
+        self.entry_hours_utc = risk.get("entry_hours_utc")
         self.min_account_balance_gold = 300.0
 
         # Trading settings
@@ -409,6 +413,16 @@ class MT5Engine:
             "risk_reward_ratio": round(tp_distance / sl_distance, 2) if sl_distance > 0 else None,
         }
 
+    def current_spread_sl_ratio(self, symbol: str, sl_distance: float) -> Optional[float]:
+        """Live spread as a fraction of the SL distance; used to rank a cycle's signals."""
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                return None
+            return spread_to_sl_ratio(tick.ask, tick.bid, sl_distance)
+        except Exception:
+            return None
+
     def execute_trade(self, trade_params: Dict) -> Dict:
         symbol = trade_params["symbol"]
         action = trade_params["action"]
@@ -419,6 +433,21 @@ class MT5Engine:
         final_lot = trade_params["lot"]
 
         logger.info(f"[EXECUTION] Executing {action} {symbol} lot={final_lot} entry={entry_price} sl={sl} tp={tp}")
+
+        # Entry Window Wall: only open new trades inside the configured UTC hours
+        hour_utc = datetime.now(timezone.utc).hour
+        if not entry_window_open(hour_utc, self.entry_hours_utc):
+            msg = (f"REJECTED: Outside entry window for {symbol} "
+                   f"({self.entry_hours_utc[0]:02d}:00-{self.entry_hours_utc[1]:02d}:00 UTC, now {hour_utc:02d}h)")
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
+
+        # Confidence Calibration Cap: LLM confidence above this has been anti-predictive
+        confidence = trade_params.get("confidence")
+        if self.max_confidence is not None and confidence is not None and confidence > self.max_confidence:
+            msg = f"REJECTED: Confidence {confidence:.2f} on {symbol} exceeds calibration cap {self.max_confidence:.2f}"
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
 
         # H1 MTF Trend Confirmation Wall
         tech_h1 = self.get_technical_data(symbol, "M5", 60)
@@ -516,6 +545,14 @@ class MT5Engine:
                 msg = f"REJECTED: Spread on {symbol} is {spread_pips:.1f} pips (exceeds max allowed {self.max_spread_pips} pips)"
                 logger.warning(msg)
                 return {"status": "rejected", "message": msg}
+
+        # Spread Cost Wall: spread relative to the SL distance (cost in R paid on entry)
+        ratio = spread_to_sl_ratio(tick.ask, tick.bid, abs(entry_price - sl))
+        if self.max_spread_sl_ratio is not None and ratio is not None and ratio > self.max_spread_sl_ratio:
+            msg = (f"REJECTED: Spread cost on {symbol} is {ratio:.1%} of SL distance "
+                   f"(max {self.max_spread_sl_ratio:.0%})")
+            logger.warning(msg)
+            return {"status": "rejected", "message": msg}
 
         live_price = float(tick.ask if action == "BUY" else tick.bid)
 

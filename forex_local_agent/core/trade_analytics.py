@@ -105,7 +105,60 @@ def simulate_path(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, direc
     return {"outcome": "OPEN", "r": round(float(mtm), 3), "bars": len(highs)}
 
 
+def spread_to_sl_ratio(ask: float, bid: float, sl_distance: float) -> Optional[float]:
+    """Spread as a fraction of the SL distance (price units). None if the SL is unknown."""
+    if not sl_distance or sl_distance <= 0:
+        return None
+    return (ask - bid) / sl_distance
+
+
+def entry_window_open(hour_utc: int, window: Optional[List[int]]) -> bool:
+    """window = [start_hour, end_hour) in UTC; None/empty means always open. Wraps midnight if start > end."""
+    if not window:
+        return True
+    start, end = int(window[0]), int(window[1])
+    if start <= end:
+        return start <= hour_utc < end
+    return hour_utc >= start or hour_utc < end
+
+
+def h1_strength(h1_label: str) -> int:
+    """2 = full trend (price and EMA20 on the same side of EMA50), 1 = bias only, 0 = neutral/unknown."""
+    lab = (h1_label or "").upper()
+    if "BIAS" in lab:
+        return 1
+    if "BULLISH" in lab or "BEARISH" in lab:
+        return 2
+    return 0
+
+
+def quick_reentries(trades: List[Dict], within_seconds: int = 1800) -> List[Dict]:
+    """Trades opened on a symbol within `within_seconds` of the previous trade on that symbol closing."""
+    by_symbol: Dict[str, List[Dict]] = {}
+    for t in sorted(trades, key=lambda t: t["entry_ts"]):
+        by_symbol.setdefault(t["symbol"], []).append(t)
+    out = []
+    for seq in by_symbol.values():
+        for prev, cur in zip(seq, seq[1:]):
+            if 0 <= cur["entry_ts"] - prev["exit_ts"] < within_seconds:
+                out.append(cur)
+    return out
+
+
+def rank_signals(candidates: List[Dict]) -> List[Dict]:
+    """Order a cycle's tradeable signals best-first for the limited open-trade slots.
+
+    Full H1 trend before bias-only, then cheapest spread relative to SL. Signals
+    without a known spread ratio go last. Stable for ties (config order).
+    """
+    def key(c):
+        ratio = c.get("spread_sl_ratio")
+        return (-h1_strength(c.get("h1_trend", "")), ratio if ratio is not None else float("inf"))
+    return sorted(candidates, key=key)
+
+
 _WALLS = (
+    ("entry window", "SESSION_WINDOW"), ("calibration cap", "CONFIDENCE_CAP"), ("spread cost", "SPREAD_COST"),
     ("counter-trend", "H1_TREND"), ("daily loss", "DAILY_LOSS_STOP"), ("max open trades", "CAPACITY"),
     ("already open", "DUPLICATE"), ("news blackout", "NEWS_BLACKOUT"), ("currency concentration", "CORRELATION"),
     ("margin", "MARGIN"), ("spread", "SPREAD"), ("xauusd", "GOLD_BALANCE"), ("risk at sl", "RISK_CAP"),

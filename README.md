@@ -209,8 +209,13 @@ Before any order is dispatched to MetaTrader 5, it must pass through **9 determi
 | 7 | **Margin Gatekeeper** | Rejects if free margin is negative or insufficient |
 | 8 | **Spread Protection Wall** | Rejects if live spread exceeds `max_spread_pips` (3.5 pips) |
 | 9 | **Gold Balance Guard** | Forbids `XAUUSD` on accounts under **\$300 USD** |
+| 10 | **Entry Window Wall** | New trades only inside `entry_hours_utc` (default **07:00-13:00 UTC**: London + first overlap hour) |
+| 11 | **Confidence Calibration Cap** | Rejects LLM confidence above `max_confidence` (0.89); the highest buckets have been anti-predictive |
+| 12 | **Spread Cost Wall** | Rejects if live spread exceeds `max_spread_sl_ratio` (6%) of the SL distance |
 
 > **Note:** These walls are deterministic Python code — the LLM cannot override, bypass, or modify them.
+
+> **Ranked execution:** each cycle first analyses every symbol, then executes the tradeable signals best-first (full H1 trend before bias-only, then lowest spread/SL) so the limited open-trade slots go to the best setups instead of whichever symbol comes first in the config (`rank_signals`).
 
 > **Broker server time:** MT5 stamps deals, ticks and bars in broker server time (Tickmill: UTC+2/UTC+3). Every history query goes through `core/mt5_time.py`, which measures the offset from live ticks during market hours and persists it in `state/`. Querying MT5 with plain UTC datetimes silently misses the most recent hours of deals.
 
@@ -406,6 +411,7 @@ The whole mock cycle runs with `mt5.order_send` patched, so no test can open, cl
 ### Offline Regression Tests
 ```powershell
 python forex_local_agent/tests/test_cycle5_regressions.py   # rules loader, reflexion quarantine, MT5 server time, daily loss, tier-1 blackout, trailing config, chatbot
+python forex_local_agent/tests/test_execution_upgrade.py    # ranked execution, entry window, confidence cap, spread cost wall, no-lookahead simulation
 python forex_local_agent/tests/test_daily_loss_stop.py
 python forex_local_agent/tests/test_chat_logger.py
 ```
@@ -414,7 +420,12 @@ python forex_local_agent/tests/test_chat_logger.py
 ```powershell
 python forex_local_agent/maintenance/daily_report.py --hours 24
 ```
-Prints and saves (to `reports/`, gitignored) win rate, payoff, profit factor, expectancy, peak-to-trough drawdown, breakdowns by symbol / direction / session / hour / confidence / exit type / spread / H1 alignment, cost drag, exposure, LLM health, risk-wall counts, counterfactual R for rejected signals, and the LLM vs follow-H1-trend vs always-WAIT baselines.
+Prints and saves (to `reports/`, gitignored) win rate, payoff, profit factor, expectancy, peak-to-trough drawdown, breakdowns by symbol / direction / session / hour / confidence / exit type / spread / H1 alignment, cost drag, exposure, LLM health, risk-wall counts, counterfactual R for rejected signals, and the LLM vs follow-H1-trend vs always-WAIT baselines. Simulated entries use the next M5 bar open (no lookahead).
+
+```powershell
+python forex_local_agent/maintenance/execution_quality.py --hours 24
+```
+Execution-quality breakdown: real fills vs a shadow entry at the next bar open, managed vs unmanaged R, R by spread/SL bucket, and quick same-symbol re-entries.
 
 ---
 
@@ -533,6 +544,10 @@ Located at `forex_local_agent/config.json`:
     "trailing_distance_pips": 10.0,
     "trailing_step_pips": 2.0,
     "max_currency_exposure": 3,
+    "max_spread_sl_ratio": 0.06,
+    "max_confidence": 0.89,
+    "entry_hours_utc": [7, 13],
+    "rank_signals": true,
     "daily_loss_limit_pct": 5.0
   },
   "model_upgrade": {
@@ -571,6 +586,10 @@ Located at `forex_local_agent/config.json`:
 | `trailing_distance_pips` | `10.0` | Distance of the trailing SL behind price |
 | `trailing_step_pips` | `2.0` | Minimum SL improvement before a trailing modification is sent |
 | `max_currency_exposure` | `3` | Max positions containing any single currency |
+| `max_spread_sl_ratio` | `0.06` | Spread Cost Wall: max live spread as a fraction of the SL distance |
+| `max_confidence` | `0.89` | Confidence Calibration Cap: LLM confidence above this is rejected |
+| `entry_hours_utc` | `[7, 13]` | Entry Window Wall: new trades only in `[start, end)` UTC hours; `null` disables |
+| `rank_signals` | `true` | Rank each cycle's signals before execution instead of config order |
 | `daily_loss_limit_pct` | `5.0` | Max cumulative realized loss (% of balance) before halting all new entries for the UTC day |
 
 ---

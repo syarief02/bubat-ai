@@ -28,7 +28,11 @@
     "trailing_start_pips": 20.0,
     "trailing_distance_pips": 10.0,
     "trailing_step_pips": 2.0,
-    "max_currency_exposure": 3
+    "max_currency_exposure": 3,
+    "max_spread_sl_ratio": 0.06,
+    "max_confidence": 0.89,
+    "entry_hours_utc": [7, 13],
+    "rank_signals": true
   },
   "trading": {
     "symbols": [

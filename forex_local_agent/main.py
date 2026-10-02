@@ -34,7 +34,7 @@ from learning.skill_factory import SkillFactory
 from maintenance.model_updater import ModelUpdater
 from core.supabase_manager import SupabaseManager
 from learning.reflexion_store import ReflexionStore, validate_reflexion_rule
-from core.trade_analytics import wall_from_message
+from core.trade_analytics import wall_from_message, rank_signals
 
 # ── Logging Configuration ────────────────────────────────────────────────────
 logger.remove()
@@ -80,6 +80,8 @@ class ForexAgent:
         self.confidence_threshold = self.config.get("risk_parameters", {}).get("confidence_threshold", 0.80)
         self.approval_timeout = self.config.get("risk_parameters", {}).get("approval_timeout_seconds", 300)
         self.max_open_trades = self.config.get("risk_parameters", {}).get("max_open_trades", 10)
+        # Rank each cycle's tradeable signals before execution instead of first-come config order
+        self.rank_signals = self.config.get("risk_parameters", {}).get("rank_signals", True)
 
         # Symbol cooldown management to prevent revenge-trading
         self.symbol_cooldowns: dict[str, datetime] = {}
@@ -195,82 +197,118 @@ class ForexAgent:
                 f"Sentiment: {decision.market_sentiment}"
             )
 
-            # g. If actionable signal, calculate deterministic trade parameters & propose
+            # g. Actionable signal -> deterministic trade parameters
             trade_params = None
-            approved = False
-            result = None
             if decision.decision != "WAIT" and decision.confidence_score >= self.confidence_threshold:
                 logger.info(f"[{symbol}] Signal meets threshold. Calculating deterministic trade parameters...")
-
                 trade_params = self.mt5_engine.calculate_trade_parameters(
                     symbol=symbol,
                     decision=decision.decision
                 )
-
                 if trade_params.get("status") == "error":
                     logger.error(f"[{symbol}] Parameter calculation error: {trade_params.get('message')}")
                     await self.openclaw.send_alert(
                         f"Parameter calculation failed for {symbol}: {trade_params.get('message')}", level="WARNING"
                     )
                 else:
-                    # Format proposal for WhatsApp with exact numbers
-                    proposal = {
-                        "action": trade_params["action"],
-                        "symbol": symbol,
-                        "lot": trade_params["lot"],
-                        "entry": trade_params["entry"],
-                        "sl": trade_params["sl"],
-                        "tp": trade_params["tp"],
-                        "atr": trade_params["atr"],
-                        "risk_amount": trade_params["risk_amount"],
-                        "risk_reward": trade_params["risk_reward_ratio"],
-                        "confidence": int(decision.confidence_score * 100),
-                        "reasoning": decision.reasoning,
-                    }
-                    auto_approve = self.config.get("risk_parameters", {}).get("auto_approve", True)
-                    whatsapp_number = self.config.get("alerts", {}).get("whatsapp_number")
+                    trade_params["confidence"] = decision.confidence_score
 
-                    if auto_approve or not whatsapp_number:
-                        logger.info(f"[{symbol}] Autonomous Execution Mode: Trade AUTO-APPROVED through deterministic Risk Wall.")
-                        approved = True
+            ctx = {"symbol": symbol, "decision": decision, "tech_data": tech_data,
+                   "news_data": news_data, "trade_params": trade_params}
+            if self.rank_signals and trade_params and trade_params.get("status") != "error":
+                # Defer: the cycle ranks every tradeable signal and fills free slots best-first
+                ctx["h1_trend"] = tech_data.get("higher_timeframe_h1", "")
+                ctx["spread_sl_ratio"] = self.mt5_engine.current_spread_sl_ratio(
+                    symbol, trade_params.get("sl_distance") or abs(trade_params["entry"] - trade_params["sl"])
+                )
+                ratio = ctx["spread_sl_ratio"]
+                logger.info(f"[{symbol}] Signal queued for ranked execution "
+                            f"(H1: {ctx['h1_trend'] or '-'}, spread/SL: {f'{ratio:.1%}' if ratio is not None else 'n/a'})")
+                return {"symbol": symbol, "pending": ctx}
+            return await self._approve_execute_and_record(ctx)
+
+        except Exception as e:
+            logger.error(f"[{symbol}] Error in analysis cycle: {e}", exc_info=True)
+            self.supabase.log_telemetry("ForexAgent", "ANALYSIS_CYCLE_ERROR", {"symbol": symbol, "error": str(e)}, status="ERROR")
+            await self.openclaw.send_alert(f"Analysis cycle error for {symbol}: {e}", level="CRITICAL")
+            return {
+                "symbol": symbol,
+                "decision": "ERROR",
+                "confidence": None,
+                "sentiment": "ERROR",
+                "h1_trend": "-",
+                "status": f"ERROR: {str(e)[:40]}"
+            }
+
+    async def _approve_execute_and_record(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+        """Approval + risk-wall execution for one analysed symbol, then Supabase/memory logging."""
+        symbol = ctx["symbol"]
+        decision = ctx["decision"]
+        tech_data = ctx["tech_data"]
+        news_data = ctx["news_data"]
+        trade_params = ctx["trade_params"]
+        try:
+            approved = False
+            result = None
+            if trade_params and trade_params.get("status") != "error":
+                # Format proposal for WhatsApp with exact numbers
+                proposal = {
+                    "action": trade_params["action"],
+                    "symbol": symbol,
+                    "lot": trade_params["lot"],
+                    "entry": trade_params["entry"],
+                    "sl": trade_params["sl"],
+                    "tp": trade_params["tp"],
+                    "atr": trade_params["atr"],
+                    "risk_amount": trade_params["risk_amount"],
+                    "risk_reward": trade_params["risk_reward_ratio"],
+                    "confidence": int(decision.confidence_score * 100),
+                    "reasoning": decision.reasoning,
+                }
+                auto_approve = self.config.get("risk_parameters", {}).get("auto_approve", True)
+                whatsapp_number = self.config.get("alerts", {}).get("whatsapp_number")
+
+                if auto_approve or not whatsapp_number:
+                    logger.info(f"[{symbol}] Autonomous Execution Mode: Trade AUTO-APPROVED through deterministic Risk Wall.")
+                    approved = True
+                else:
+                    sent = await self.openclaw.send_trade_proposal(proposal)
+                    if sent:
+                        approved = await self.openclaw.wait_for_approval(timeout_seconds=self.approval_timeout)
                     else:
-                        sent = await self.openclaw.send_trade_proposal(proposal)
-                        if sent:
-                            approved = await self.openclaw.wait_for_approval(timeout_seconds=self.approval_timeout)
-                        else:
-                            logger.warning(f"[{symbol}] WhatsApp proposal could not be sent. Trade NOT approved.")
-                            approved = False
+                        logger.warning(f"[{symbol}] WhatsApp proposal could not be sent. Trade NOT approved.")
+                        approved = False
 
-                    if approved:
-                        logger.info(f"[{symbol}] Trade APPROVED — executing through risk wall...")
-                        result = self.mt5_engine.execute_trade(trade_params)
-                        logger.bind(trade=True).info(f"[{symbol}] Trade result: {json.dumps(result)}")
+                if approved:
+                    logger.info(f"[{symbol}] Trade APPROVED — executing through risk wall...")
+                    result = self.mt5_engine.execute_trade(trade_params)
+                    logger.bind(trade=True).info(f"[{symbol}] Trade result: {json.dumps(result)}")
 
-                        if result.get("status") == "rejected":
-                            await self.openclaw.send_alert(
-                                f"RISK WALL REJECTED trade on {symbol}: {result.get('message')}", level="WARNING"
-                            )
-                        elif result.get("status") == "success":
-                            await self.openclaw.send_alert(
-                                f"EXECUTED {trade_params['action']} {symbol} | Ticket: {result.get('ticket')} | Lot: {result.get('lot')}",
-                                level="INFO"
-                            )
-
-                        # Sync executed trade to Supabase
-                        self.supabase.log_trade_execution(
-                            symbol=symbol,
-                            order_type=trade_params["action"],
-                            volume=result.get("lot", trade_params["lot"]),
-                            open_price=trade_params["entry"],
-                            stop_loss=trade_params["sl"],
-                            take_profit=trade_params["tp"],
-                            ticket_id=result.get("ticket"),
-                            status="OPEN" if result.get("status") == "success" else "REJECTED",
-                            execution_result=result,
+                    if result.get("status") == "rejected":
+                        await self.openclaw.send_alert(
+                            f"RISK WALL REJECTED trade on {symbol}: {result.get('message')}", level="WARNING"
                         )
-                    else:
-                        logger.info(f"[{symbol}] Trade NOT approved (rejected or timed out).")
-            else:
+                    elif result.get("status") == "success":
+                        await self.openclaw.send_alert(
+                            f"EXECUTED {trade_params['action']} {symbol} | Ticket: {result.get('ticket')} | Lot: {result.get('lot')}",
+                            level="INFO"
+                        )
+
+                    # Sync executed trade to Supabase
+                    self.supabase.log_trade_execution(
+                        symbol=symbol,
+                        order_type=trade_params["action"],
+                        volume=result.get("lot", trade_params["lot"]),
+                        open_price=trade_params["entry"],
+                        stop_loss=trade_params["sl"],
+                        take_profit=trade_params["tp"],
+                        ticket_id=result.get("ticket"),
+                        status="OPEN" if result.get("status") == "success" else "REJECTED",
+                        execution_result=result,
+                    )
+                else:
+                    logger.info(f"[{symbol}] Trade NOT approved (rejected or timed out).")
+            elif trade_params is None:
                 logger.info(f"[{symbol}] Decision is WAIT or confidence below threshold. No action.")
 
             # Sync decision to Supabase (metadata feeds the daily post-mortem report)
@@ -637,12 +675,24 @@ class ForexAgent:
                     prev_trailing = {k: self.cycle_stats.get(k, 0) for k in ("trailing_checks", "trailing_mods")}
                     self.cycle_stats = {}
                     cycle_results = []
+                    pending = []
                     for symbol in self.symbols:
                         if not self.running:
                             break
                         res = await self.run_analysis_cycle(symbol)
-                        if res:
+                        if res and res.get("pending"):
+                            pending.append(res["pending"])
+                        elif res:
                             cycle_results.append(res)
+
+                    # 1b. Execute queued signals best-first (full H1 trend, then cheapest spread/SL)
+                    if pending:
+                        ranked = rank_signals(pending)
+                        logger.info("Ranked execution order: " + ", ".join(c["symbol"] for c in ranked))
+                        for ctx in ranked:
+                            cycle_results.append(await self._approve_execute_and_record(ctx))
+                        order = {sym: i for i, sym in enumerate(self.symbols)}
+                        cycle_results.sort(key=lambda r: order.get(r.get("symbol"), len(order)))
 
                     # 2. Check for recently closed trades and learn from losses FIRST
                     await self.check_closed_trades()
