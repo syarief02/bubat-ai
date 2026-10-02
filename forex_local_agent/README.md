@@ -216,7 +216,7 @@ Open `forex_local_agent/config.json` and review the settings:
   "open_webui_url": "http://localhost:3000",
   "openclaw_webhook_port": 5055,
   "mt5_credentials": {
-    "login": 25360772,
+    "login": [REDACTED_ACCOUNT],
     "password": "",
     "server": "Tickmill-Demo",
     "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
@@ -239,7 +239,7 @@ Open `forex_local_agent/config.json` and review the settings:
     "max_news_tokens": 4000
   },
   "alerts": {
-    "admin_email": "hello@syariefazman.com",
+    "admin_email": "[REDACTED_EMAIL]",
     "whatsapp_enabled": true
   }
 }

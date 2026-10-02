@@ -1,7 +1,7 @@
 ================================================================================
 MASTER IMPLEMENTATION SPECIFICATION: LOCAL AUTONOMOUS FOREX AI AGENT & WORKSPACE
 Target Environment: Local Machine / Private Dedicated VPS (Windows / Linux)
-System Admin / Emergency Contact: hello@syariefazman.com
+System Admin / Emergency Contact: [REDACTED_EMAIL]
 ================================================================================
 
 [DIRECTIVE FOR CODE BUILDER / AGENT ENGINE]
@@ -186,7 +186,7 @@ proposals, critical failures, and trade setups directly to your WhatsApp.
      "PROPOSAL: BUY EURUSD 0.05 lot | Confidence: 87% | Reason: ECB Hawkish news + H1 RSI oversold. Reply YES to execute or NO to abort."
    - The loop awaits an incoming WhatsApp reply for up to 5 minutes before auto-aborting.
    - If emergency errors occur (MT5 disconnect, zero liquidity), route immediate
-     alerts to WhatsApp and dispatch an alert email to `hello@syariefazman.com`.
+     alerts to WhatsApp and dispatch an alert email to `[REDACTED_EMAIL]`.
 
 ================================================================================
 8. PHASE 6: TRADING EXECUTION & DETERMINISTIC RISK WALL (METATRADER 5)
@@ -323,7 +323,7 @@ without erasing its accumulated skills, rules, or memories:
 3. Crash Resilience & Logging:
    - The loop runs inside a global `try...except` envelope.
    - Unhandled runtime exceptions trigger immediate emergency notifications to
-     `hello@syariefazman.com` and log to `logs/system_errors.log`.
+     `[REDACTED_EMAIL]` and log to `logs/system_errors.log`.
    - Automatic terminal reconnection routines ensure temporary MT5 dropouts do not
      terminate the background script.
 

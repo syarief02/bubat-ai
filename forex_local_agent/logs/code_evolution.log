@@ -56,7 +56,7 @@ Mode 4 (Tool Deficiency):
 --------------------------------------------------------------------------------
 - Syntax check: `python -m py_compile` passed on all 8 modified files.
 - Mock Cycle Test (`tests/test_mock_cycle.py`):
-  * Step 1: MT5 Engine connected successfully to Account 25360772 ($100.52 USD).
+  * Step 1: MT5 Engine connected successfully to Account [REDACTED_ACCOUNT] ($100.52 USD).
   * Step 2: M5 Bars fetched for EURUSD; ATR=0.00031, RSI=50.2, H1 Trend=BULLISH BIAS.
   * Step 3: Sentiment & Calendar Scraper executed. US Core PCE & GDP detected in 18m.
   * Step 4: Calendar Permission Wall triggered: `Permitted=False, Reason=BLACKOUT: [USD] 'Core PCE Price Index m/m' release in 18m`.
