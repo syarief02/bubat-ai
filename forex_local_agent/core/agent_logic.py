@@ -384,7 +384,12 @@ class AgentLogic:
             '  "root_cause": "string",\n'
             '  "lesson_learned": "string",\n'
             '  "new_rule": "string"\n'
-            "}"
+            "}\n"
+            "Important: The system already has ATR-based SL/TP, 15-pip SL floor, trailing stops, H1 trend wall, currency correlation filter, spread wall, and news blackout filter.\n"
+            "The `new_rule` must be SPECIFIC to the symbol, session, or market condition (not generic advice).\n"
+            "The `new_rule` must start with an action verb and reference the specific symbol.\n"
+            "Bad example: 'Implement a stop-loss order' (already exists, useless).\n"
+            "Good example: 'Avoid SELL entries on GBPJPY during Tokyo session open (22:00-01:00 UTC) when RSI > 60'."
         )
         user_prompt = f"Trade Data: {json.dumps(trade_data, indent=2, default=str)}"
 

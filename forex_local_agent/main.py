@@ -446,15 +446,34 @@ class ForexAgent:
                     # Generate post-mortem via LLM
                     post_mortem = await self.agent_logic.generate_post_mortem(trade)
 
-                    # Append new rule to learned_rules.md
-                    rules_path = Path("learning/learned_rules.md")
-                    new_rule = f"\n\nRULE #{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')} [{post_mortem.trade_symbol}]: {post_mortem.new_rule}\n"
-                    new_rule += f"  Root cause: {post_mortem.root_cause}\n"
-                    new_rule += f"  Lesson: {post_mortem.lesson_learned}\n"
-
-                    with open(rules_path, "a", encoding="utf-8") as f:
-                        f.write(new_rule)
-                    logger.info(f"Reflexion rule added: {post_mortem.new_rule}")
+                    # Validate and append new rule to learned_rules.md
+                    rule_text = post_mortem.new_rule.strip()
+                    rule_lower = rule_text.lower()
+                    
+                    invalid_phrases = ['implement a stop-loss', 'ensure sufficient volume', 'always ensure', 'implement a volume check']
+                    
+                    if len(rule_text) > 20 and not any(phrase in rule_lower for phrase in invalid_phrases):
+                        rules_path = Path("learning/learned_rules.md")
+                        now = datetime.now(timezone.utc)
+                        formatted_rule = (
+                            f"\n### [REFLEXION] Rule #{now.strftime('%Y%m%d%H%M')}\n"
+                            f"- **Date**: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+                            f"- **Source**: loss_reflexion\n"
+                            f"- **Directive**: [{post_mortem.trade_symbol}] {rule_text} (Root cause: {post_mortem.root_cause}. Lesson: {post_mortem.lesson_learned})\n"
+                        )
+                        
+                        with open(rules_path, "a", encoding="utf-8") as f:
+                            f.write(formatted_rule)
+                        logger.info(f"Reflexion rule added: {rule_text}")
+                        
+                        if rules_path.stat().st_size > 100 * 1024:
+                            with open(rules_path, "r", encoding="utf-8") as f:
+                                lines = f.readlines()
+                            with open(rules_path, "w", encoding="utf-8") as f:
+                                f.writelines(lines[:30])
+                            logger.warning("learned_rules.md exceeded 100KB, truncated below line 30.")
+                    else:
+                        logger.debug(f"Reflexion rule failed validation: {rule_text}")
 
                     # Store outcome in memory
                     await self.memory.store_trade_outcome(trade, post_mortem.outcome, profit)

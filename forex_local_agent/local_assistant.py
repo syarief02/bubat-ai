@@ -24,8 +24,9 @@ import re
 import time
 import subprocess
 import shutil
+import uuid
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import urllib.request
 import urllib.error
 
@@ -42,6 +43,11 @@ WORKSPACE_DIR = Path(__file__).resolve().parent
 AGENT_DIR = WORKSPACE_DIR / "forex_local_agent"
 sys.path.insert(0, str(WORKSPACE_DIR))
 sys.path.insert(0, str(AGENT_DIR))
+
+try:
+    from forex_local_agent.chat_logger import log_chat_event, scrub_secrets
+except ImportError:
+    from chat_logger import log_chat_event, scrub_secrets
 
 from dotenv import load_dotenv
 
@@ -318,8 +324,10 @@ class ToolExecutor:
 class BubatAutonomousAgent:
     """Agentic orchestrator that reasons, calls tools, and reports results."""
 
-    def __init__(self, model: str = DEFAULT_MODEL, auto_confirm: bool = False):
+    def __init__(self, model: str = DEFAULT_MODEL, auto_confirm: bool = False, log_file: Optional[Union[str, Path]] = None):
         self.model = model
+        self.session_id = str(uuid.uuid4())
+        self.log_file = log_file or "logs/chat_sessions.log"
         self.executor = ToolExecutor(auto_confirm=auto_confirm)
         self.conversation_history: List[Dict[str, str]] = []
         self._init_system_prompt()
@@ -371,6 +379,14 @@ Output ONLY a JSON block when invoking a tool:
         self._init_system_prompt()
 
     def chat_turn(self, user_prompt: str) -> str:
+        # Log user message
+        log_chat_event(
+            session_id=self.session_id,
+            role="user",
+            content=user_prompt,
+            log_file=self.log_file,
+        )
+
         # 1. Continuous Learning: Auto-detect rules or language preference
         learned = self.executor.learner.auto_detect_and_learn(user_prompt)
         if learned:
@@ -413,11 +429,24 @@ Output ONLY a JSON block when invoking a tool:
 
             response_content = self._call_ollama()
             if not response_content:
-                return f"{RED}Error: Unable to connect to Ollama at {OLLAMA_API_BASE}.{RESET}"
+                err_msg = f"Error: Unable to connect to Ollama at {OLLAMA_API_BASE}."
+                log_chat_event(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=err_msg,
+                    log_file=self.log_file,
+                )
+                return f"{RED}{err_msg}{RESET}"
 
             tool_call = self._extract_tool_call(response_content)
 
             if not tool_call:
+                log_chat_event(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=response_content,
+                    log_file=self.log_file,
+                )
                 self.conversation_history.append({"role": "assistant", "content": response_content})
                 return response_content
 
@@ -433,8 +462,15 @@ Output ONLY a JSON block when invoking a tool:
                     "content": "You have already executed this action. Please synthesize your findings and give the final answer to the user now."
                 })
                 final_answer = self._call_ollama()
+                final_text = final_answer or "Task completed."
+                log_chat_event(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=final_text,
+                    log_file=self.log_file,
+                )
                 self.conversation_history.append({"role": "assistant", "content": final_answer})
-                return final_answer or "Task completed."
+                return final_text
 
             called_tools.append(call_sig)
 
@@ -453,12 +489,28 @@ Output ONLY a JSON block when invoking a tool:
                 preview = preview[:80] + "..."
             print(f"  {DIM}Result: {preview} ({len(tool_result)} chars){RESET}")
 
+            # Log tool call and result
+            log_chat_event(
+                session_id=self.session_id,
+                role="tool",
+                content=json.dumps(tool_args),
+                tool_name=tool_name,
+                tool_result_preview=tool_result,
+                log_file=self.log_file,
+            )
+
             self.conversation_history.append({"role": "assistant", "content": response_content})
             self.conversation_history.append({
                 "role": "user",
                 "content": f"[TOOL RESULT for {tool_name}]:\n{tool_result}\n\nTask: Analyze this output. If complete, answer the user directly. If more action is needed, invoke the next tool."
             })
 
+        log_chat_event(
+            session_id=self.session_id,
+            role="assistant",
+            content="Agent reached maximum step limit.",
+            log_file=self.log_file,
+        )
         return "Agent reached maximum step limit."
 
     def _call_ollama(self) -> Optional[str]:

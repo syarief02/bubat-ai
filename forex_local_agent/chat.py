@@ -12,8 +12,9 @@ import re
 import time
 import urllib.request
 import urllib.error
+import uuid
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 
 # Ensure UTF-8 on Windows terminal
 if sys.platform == "win32":
@@ -31,6 +32,11 @@ sys.path.insert(0, str(WORKSPACE_DIR))
 from core.web_surfer import WebSurfer
 from core.market_scanner import MarketScanner
 from learning.continuous_learner import ContinuousLearner
+
+try:
+    from forex_local_agent.chat_logger import log_chat_event, scrub_secrets
+except ImportError:
+    from chat_logger import log_chat_event, scrub_secrets
 
 try:
     from core.mt5_engine import MT5Engine
@@ -145,8 +151,10 @@ class ChatToolExecutor:
 class IntelligentForexChat:
     """Conversational Forex AI that browses the web, scans MT5, and learns."""
 
-    def __init__(self, model: str = DEFAULT_MODEL):
+    def __init__(self, model: str = DEFAULT_MODEL, log_file: Optional[Union[str, Path]] = None):
         self.model = model
+        self.session_id = str(uuid.uuid4())
+        self.log_file = log_file or "logs/chat_sessions.log"
         self.executor = ChatToolExecutor()
         self.conversation_history: List[Dict[str, str]] = []
         self._build_system_prompt()
@@ -198,6 +206,14 @@ When you receive the tool result, synthesize the findings into a clear, structur
         self._build_system_prompt()
 
     def chat_turn(self, user_prompt: str) -> str:
+        # Log user message
+        log_chat_event(
+            session_id=self.session_id,
+            role="user",
+            content=user_prompt,
+            log_file=self.log_file,
+        )
+
         # 1. Continuous Learning: Check if user prompt teaches a rule or preference
         learned_notice = self.executor.learner.auto_detect_and_learn(user_prompt)
         if learned_notice:
@@ -245,11 +261,24 @@ When you receive the tool result, synthesize the findings into a clear, structur
 
             response_text = self._call_ollama()
             if not response_text:
-                return f"{RED}Error: Unable to connect to Ollama server at {OLLAMA_API_BASE}.{RESET}"
+                err_msg = f"Error: Unable to connect to Ollama server at {OLLAMA_API_BASE}."
+                log_chat_event(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=err_msg,
+                    log_file=self.log_file,
+                )
+                return f"{RED}{err_msg}{RESET}"
 
             tool_call = self._extract_tool_call(response_text)
 
             if not tool_call:
+                log_chat_event(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=response_text,
+                    log_file=self.log_file,
+                )
                 self.conversation_history.append({"role": "assistant", "content": response_text})
                 return response_text
 
@@ -265,8 +294,15 @@ When you receive the tool result, synthesize the findings into a clear, structur
                     "content": "You have already executed this tool. Please synthesize the data you collected and give the final answer to the user now."
                 })
                 final_res = self._call_ollama()
+                final_text = final_res or "Analysis complete."
+                log_chat_event(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=final_text,
+                    log_file=self.log_file,
+                )
                 self.conversation_history.append({"role": "assistant", "content": final_res})
-                return final_res or "Analysis complete."
+                return final_text
 
             called_tools.append(call_key)
 
@@ -285,12 +321,28 @@ When you receive the tool result, synthesize the findings into a clear, structur
                 preview = preview[:90] + "..."
             print(f"  {DIM}Result: {preview} ({len(tool_output)} chars){RESET}")
 
+            # Log tool call and result
+            log_chat_event(
+                session_id=self.session_id,
+                role="tool",
+                content=json.dumps(tool_args),
+                tool_name=tool_name,
+                tool_result_preview=tool_output,
+                log_file=self.log_file,
+            )
+
             self.conversation_history.append({"role": "assistant", "content": response_text})
             self.conversation_history.append({
                 "role": "user",
                 "content": f"[TOOL RESULT for {tool_name}]:\n{tool_output}\n\nTask: Synthesize this data and answer the user's question with clarity. If more info is needed, invoke the next tool."
             })
 
+        log_chat_event(
+            session_id=self.session_id,
+            role="assistant",
+            content="Analysis completed.",
+            log_file=self.log_file,
+        )
         return "Analysis completed."
 
     def _call_ollama(self) -> Optional[str]:

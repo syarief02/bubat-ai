@@ -156,3 +156,104 @@ TARGET ECOSYSTEM: Bubat AI Autonomous Quantitative Forex Agent
 - `test_parser.py`: 9/9 unit tests passed
 - `test_sync.py`: Supabase sync confirmed (ID: 6a6b5912)
 - Rules loader filter: PASSED (47KB -> 1.4KB curated output)
+
+## [2026-10-03T00:37] 24-Hour Post-Mortem Cycle #4
+
+### TELEMETRY (24h window: 2026-10-01 16:40 UTC to 2026-10-02 16:40 UTC)
+- Closed Trades: 149 (71W / 78L / 0BE)
+- Win Rate: 47.7%
+- Gross P&L: -$15.27 | Swap: -$0.21 | Commission: $0.00 | Net: -$15.48
+- Avg Winner: $1.17 | Avg Loser: -$1.26
+- Payoff Ratio: 0.93 (improved from 0.62 last cycle)
+- Profit Factor: 0.85
+- Expectancy: -$0.1039/trade
+- Max Drawdown: -$17.47
+- Avg Hold Time: 87.4 min
+- Trades/Hour: 6.2
+- Account: $144.30 balance / $142.90 equity (down from $187.26)
+- Active Positions: 9
+- Direction: BUY 10W/15L | SELL 54W/60L (heavy SELL bias)
+- Parse Failures: 4 in window (CHFJPY x2, GBPNZD x2) -- all before bot restart
+- Worst Pairs: USDJPY (-$8.95, 18% WR), NZDCHF (-$4.40), EURJPY (-$4.16)
+- Best Pairs: EURUSD (+$7.18, 70% WR), CHFJPY (+$2.79), EURNZD (+$2.46)
+
+### ROOT-CAUSE FINDINGS
+
+1. **[CONFIRMED] No daily loss stop existed.**
+   Evidence: Balance dropped $42.96 (23%) over ~48h from $187.26 to $144.30 with no circuit breaker.
+   Root cause: `execute_trade()` had no cumulative daily P&L check. The `max_drawdown_pct: 2.0` config key
+   was NEVER enforced in any code path.
+   Fix: Added daily loss stop wall (Risk Wall #2) in `mt5_engine.py:execute_trade()` that queries MT5
+   deal history for today's realized P&L and rejects new trades when loss exceeds `daily_loss_limit_pct` (5%).
+
+2. **[CONFIRMED] Reflexion loop produced 385 junk rules in 24h (70KB).**
+   Evidence: `learned_rules.md` grew from 809 to 1,209 lines. All 385 new entries were generic
+   "implement a volume check" / "ensure sufficient volume" noise.
+   Root cause: `main.py:check_closed_trades()` blindly appended raw LLM `new_rule` output. The
+   `generate_post_mortem()` prompt was too vague, producing generic advice.
+   Fix: (a) Added rule validation with banned-phrase filter and min-length check. (b) Upgraded
+   post-mortem prompt to reference existing tools and require symbol-specific rules. (c) Pruned
+   file from 1,209 to 26 lines. (d) Added 100KB cap with auto-truncation.
+
+3. **[CONFIRMED] No persistent chat/tool logging for chat.py and local_assistant.py.**
+   Evidence: `conversation_history` lived only in memory, no disk persistence.
+   Root cause: Never implemented.
+   Fix: Created `chat_logger.py` with JSONL logging to `logs/chat_sessions.log`, secret scrubber
+   (redacts keys, passwords, tokens, emails, 8+ digit numbers), integrated into both chat.py
+   and local_assistant.py. Added to .gitignore.
+
+4. **[CONFIRMED] Running bot using OLD code (pre-circuit-breaker).**
+   Evidence: `system_errors.log` line references (line 242) don't match HEAD code. Last error was
+   2026-10-02 00:26 UTC -- 16+ hours ago, yet bot is still running and producing trades.
+   Root cause: Bot was never restarted after commit 739612f. Python caches modules at process start.
+   Fix: Bot needs restart after this cycle's commit.
+
+5. **[LIKELY] USDJPY is a consistent loser.**
+   Evidence: 2W/9L (18% WR, -$8.95) this cycle. Previous cycle also showed USDJPY losses.
+   Root cause: Hypothesis -- JPY pairs have thin liquidity during non-Tokyo sessions and the
+   M5 timeframe generates too many false signals.
+   Fix: Added curated rule requiring min 0.85 confidence for USDJPY. Placed on WATCHLIST for
+   removal if performance doesn't improve in 2 more cycles.
+
+6. **[CONFIRMED] Ollama was DOWN during this post-mortem cycle.**
+   Evidence: `curl http://localhost:11434/api/tags` returned connection refused.
+   Root cause: Ollama process not running. Circuit breaker from commit 739612f would have
+   mitigated this but the running bot never loaded that code.
+   Fix: Restart Ollama before restarting the bot.
+
+### LESSONS / RULES
+- Rule #202610030045 [STRATEGY]: USDJPY min confidence 0.85 (synced to Supabase: ddd5d76a)
+- Rule #202610030050 [RISK_MANAGEMENT]: Daily loss stop at 5% of balance (synced: 9bbe3571)
+- Pruned 1,183 junk rules from learned_rules.md (1,209 -> 26 lines, 70KB -> 1.5KB)
+
+### CODE CHANGES
+- `core/mt5_engine.py`: Added daily loss stop wall (Risk Wall #2) with 50% early warning
+- `main.py`: Reflexion loop: added rule validation, banned-phrase filter, curated format output, 100KB cap
+- `core/agent_logic.py`: Improved generate_post_mortem() prompt to require symbol-specific rules
+- `chat_logger.py`: NEW -- structured JSONL chat/tool logging with secret scrubber
+- `chat.py`: Integrated chat_logger with session tracking
+- `local_assistant.py`: Integrated chat_logger with session tracking
+- `maintenance/daily_report.py`: NEW -- reusable 24h metrics report script (saves JSON to reports/)
+- `config.json`: Added daily_loss_limit_pct: 5.0
+- `learning/learned_rules.md`: Pruned to 26 lines, added 2 curated rules
+- `tests/test_daily_loss_stop.py`: NEW -- daily loss stop wall validation
+- `tests/test_chat_logger.py`: NEW -- scrubber and logger tests (10 assertions)
+- `.gitignore`: Added forex_local_agent/reports/
+- `README.md`: Updated risk walls table (8 -> 9), added daily_loss_limit_pct to config reference
+
+### VERIFICATION
+- python -m compileall: 0 errors
+- test_mock_cycle.py: 8/8 assertions PASSED
+- test_daily_loss_stop.py: 4/4 assertions PASSED
+- test_chat_logger.py: 10/10 tests PASSED
+- maintenance/daily_report.py: produced valid JSON report
+
+### NEEDS MY APPROVAL
+- None this cycle (all changes are safety improvements, bug fixes, or instrumentation)
+
+### WATCHLIST
+- USDJPY: If WR stays <30% across 2 more cycles, consider removing from trading symbols
+- Payoff ratio: Improved from 0.62 to 0.93 but still <1.0. Monitor if reflexion improvements help
+- BUY direction: 10W/15L (40%) vs SELL 54W/60L (47%). Investigate BUY signal quality next cycle
+- Trades/hour: 6.2 is high (149 trades/day). May indicate overtrading. Track spread+swap cost share
+- Ollama uptime: Two consecutive cycles with Ollama DOWN. Monitor reliability

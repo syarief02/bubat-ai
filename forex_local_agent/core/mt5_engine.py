@@ -412,6 +412,34 @@ class MT5Engine:
             logger.warning(msg)
             return {"status": "rejected", "message": msg}
 
+        # Daily Loss Stop Wall
+        daily_loss_limit_pct = self.config.get("risk_parameters", {}).get("daily_loss_limit_pct")
+        if daily_loss_limit_pct is not None:
+            account_info = mt5.account_info()
+            if account_info is not None:
+                balance = account_info.balance
+                
+                from datetime import timezone
+                now_utc = datetime.now(timezone.utc)
+                start_of_day_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                deals = mt5.history_deals_get(start_of_day_utc, now_utc)
+                if deals is not None:
+                    realized_pnl = sum(deal.profit for deal in deals if deal.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT))
+                else:
+                    realized_pnl = 0.0
+                
+                if realized_pnl < 0:
+                    realized_loss = abs(realized_pnl)
+                    limit = balance * (daily_loss_limit_pct / 100.0)
+                    
+                    if realized_loss > limit:
+                        msg = f"REJECTED: Daily loss limit reached (${realized_loss:.2f} / ${limit:.2f})"
+                        logger.warning(msg)
+                        return {"status": "rejected", "message": msg}
+                    elif realized_loss > (limit * 0.5):
+                        logger.warning(f"WARNING: Daily loss is at {realized_loss:.2f}, approaching limit of {limit:.2f}!")
+
         open_positions = self.get_open_positions()
         if len(open_positions) >= self.max_open_trades:
             msg = f"REJECTED: Max open trades ({self.max_open_trades}) reached"

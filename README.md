@@ -195,20 +195,22 @@ Computes trade geometry mathematically without LLM hallucination:
 
 ### 2. Institutional Risk Walls & Defense-in-Depth
 
-Before any order is dispatched to MetaTrader 5, it must pass through **8 deterministic risk walls** in sequence:
+Before any order is dispatched to MetaTrader 5, it must pass through **9 deterministic risk walls** in sequence:
 
 | Wall # | Name | Logic |
 |---|---|---|
 | 1 | **H1 Multi-Timeframe Trend Wall** | Never BUY if H1 is BEARISH; never SELL if H1 is BULLISH |
-| 2 | **Capacity Wall** | Max **10 open trades** account-wide |
-| 3 | **Duplicate Position Wall** | Only **one active position per symbol** |
-| 4 | **Economic News Blackout Wall** | Rejects if high-impact news ≤30 min ahead or ≤15 min past |
-| 5 | **Currency Correlation Wall** | Max **3 positions per currency** to prevent correlated cascade stops |
-| 6 | **Margin Gatekeeper** | Rejects if free margin is negative or insufficient |
-| 7 | **Spread Protection Wall** | Rejects if live spread exceeds `max_spread_pips` (3.5 pips) |
-| 8 | **Gold Balance Guard** | Forbids `XAUUSD` on accounts under **\$300 USD** |
+| 2 | **Daily Loss Stop** | Blocks all new entries when cumulative realized losses for the UTC day exceed `daily_loss_limit_pct` (5%) of balance |
+| 3 | **Capacity Wall** | Max **10 open trades** account-wide |
+| 4 | **Duplicate Position Wall** | Only **one active position per symbol** |
+| 5 | **Economic News Blackout Wall** | Rejects if high-impact news ≤30 min ahead or ≤15 min past |
+| 6 | **Currency Correlation Wall** | Max **3 positions per currency** to prevent correlated cascade stops |
+| 7 | **Margin Gatekeeper** | Rejects if free margin is negative or insufficient |
+| 8 | **Spread Protection Wall** | Rejects if live spread exceeds `max_spread_pips` (3.5 pips) |
+| 9 | **Gold Balance Guard** | Forbids `XAUUSD` on accounts under **\$300 USD** |
 
 > **Note:** These walls are deterministic Python code — the LLM cannot override, bypass, or modify them.
+
 
 ---
 
@@ -504,7 +506,8 @@ Located at `forex_local_agent/config.json`:
     "trailing_stop_enabled": true,
     "trailing_breakeven_pips": 10.0,
     "trailing_step_pips": 5.0,
-    "max_currency_exposure": 3
+    "max_currency_exposure": 3,
+    "daily_loss_limit_pct": 5.0
   },
   "model_upgrade": {
     "scan_interval_days": 7,
@@ -537,6 +540,7 @@ Located at `forex_local_agent/config.json`:
 | `trailing_breakeven_pips` | `10.0` | Pips in profit before auto-moving SL to breakeven |
 | `trailing_step_pips` | `5.0` | Pip step for trailing stop after breakeven |
 | `max_currency_exposure` | `3` | Max positions containing any single currency |
+| `daily_loss_limit_pct` | `5.0` | Max cumulative realized loss (% of balance) before halting all new entries for the UTC day |
 
 ---
 
