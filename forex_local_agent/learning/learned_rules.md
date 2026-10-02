@@ -31,3 +31,8 @@
 - **Date**: 2026-10-03 00:50:00 UTC
 - **Source**: 24h_post_mortem_cycle4
 - **Directive**: Account-level daily loss stop is enforced at 5% of balance. When cumulative realized losses for the UTC day exceed this threshold, all new trade entries are blocked until the next UTC day. This prevents catastrophic drawdown spirals.
+
+### [NEWS] Rule #202610021800
+- **Date**: 2026-10-02 18:00:00 UTC
+- **Source**: 24h_post_mortem_audit
+- **Directive**: Tier-1 USD releases (Non-Farm Payrolls, CPI, Fed rate decision, FOMC statement/press conference) move ALL pairs, not only USD pairs. Output WAIT on every symbol from 30 minutes before until 15 minutes after such a release. Evidence: NFP 2026-10-02 12:30 UTC — 17 non-USD crosses entered 12:00-12:45 UTC, 5 wins, net -$15.17 (38% of the day's loss). Now also enforced by the news blackout wall (news_blackout_global_tier1).

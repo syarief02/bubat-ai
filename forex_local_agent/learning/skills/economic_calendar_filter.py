@@ -15,6 +15,20 @@ from typing import List, Dict, Any, Tuple, Optional
 from loguru import logger
 
 
+# Tier-1 USD releases move every pair (USD liquidity shock), so they black out ALL symbols,
+# not just USD pairs. Evidence: NFP 2026-10-02 12:30 UTC, 16 non-USD crosses opened 12:25-12:41,
+# most stopped out within 15 min.
+TIER1_GLOBAL_COUNTRY = "USD"
+TIER1_GLOBAL_KEYWORDS = ("non-farm", "cpi", "federal funds rate", "fomc statement", "fomc press conference")
+
+
+def is_tier1_global_event(event: Dict[str, Any]) -> bool:
+    if str(event.get("country", "")).upper() != TIER1_GLOBAL_COUNTRY or event.get("impact") != "High":
+        return False
+    title = str(event.get("title", "")).lower()
+    return any(k in title for k in TIER1_GLOBAL_KEYWORDS)
+
+
 class EconomicCalendarFilter:
     """
     Fetches, caches, and evaluates high-impact economic calendar events.
@@ -132,7 +146,9 @@ class EconomicCalendarFilter:
         self,
         symbol: str,
         blackout_before_mins: int = 30,
-        blackout_after_mins: int = 15
+        blackout_after_mins: int = 15,
+        global_tier1: bool = True,
+        now: Optional[datetime] = None,
     ) -> Tuple[bool, str]:
         """
         Check if an entry is blocked due to an imminent or freshly released High-Impact event.
@@ -141,18 +157,20 @@ class EconomicCalendarFilter:
             symbol: Forex pair (e.g. 'EURUSD')
             blackout_before_mins: Minutes before release to stop new entries (default 30m)
             blackout_after_mins: Minutes after release before spreads normalize (default 15m)
+            global_tier1: Tier-1 USD events (NFP, CPI, Fed rate, FOMC) block every symbol
             
         Returns:
             (permitted: bool, reason: str)
         """
         self.refresh_calendar()
         currencies = self.extract_currencies(symbol)
-        now = datetime.now(timezone.utc)
+        now = now or datetime.now(timezone.utc)
 
         for ev in self._cached_events:
             country = ev.get("country", "").upper()
             impact = ev.get("impact", "")
-            if country in currencies and impact == "High":
+            applies = country in currencies or (global_tier1 and is_tier1_global_event(ev))
+            if applies and impact == "High":
                 ev_time = self._parse_event_datetime(ev.get("date", ""))
                 if not ev_time:
                     continue
@@ -163,14 +181,16 @@ class EconomicCalendarFilter:
                 # 1. Before release blackout window
                 if 0 <= diff_minutes <= blackout_before_mins:
                     title = ev.get("title", "High-Impact Release")
-                    msg = f"BLACKOUT: [{country}] '{title}' release in {int(diff_minutes)}m"
+                    scope = "" if country in currencies else " (tier-1 global)"
+                    msg = f"BLACKOUT: [{country}] '{title}' release in {int(diff_minutes)}m{scope}"
                     return False, msg
 
                 # 2. Immediately after release blackout window (spread blowout cushion)
                 if -blackout_after_mins <= diff_minutes < 0:
                     title = ev.get("title", "High-Impact Release")
                     mins_ago = abs(int(diff_minutes))
-                    msg = f"BLACKOUT: [{country}] '{title}' released {mins_ago}m ago (volatility buffer)"
+                    scope = "" if country in currencies else ", tier-1 global"
+                    msg = f"BLACKOUT: [{country}] '{title}' released {mins_ago}m ago (volatility buffer{scope})"
                     return False, msg
 
         return True, "CLEAR"
@@ -197,7 +217,8 @@ def is_trade_permitted_by_calendar(symbol: str, blackout_before: int = 30, black
     """Helper functional API to check trade permission against live calendar."""
     before = kwargs.get("pre_buffer_mins", blackout_before)
     after = kwargs.get("post_buffer_mins", blackout_after)
-    return calendar_filter.is_trade_permitted_by_calendar(symbol, before, after)
+    global_tier1 = kwargs.get("global_tier1", True)
+    return calendar_filter.is_trade_permitted_by_calendar(symbol, before, after, global_tier1=global_tier1)
 
 
 def get_economic_events_summary(symbol: str) -> str:

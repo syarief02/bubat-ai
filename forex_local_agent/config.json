@@ -21,6 +21,7 @@
     "symbol_cooldown_minutes": 30,
     "news_blackout_pre_mins": 30,
     "news_blackout_post_mins": 15,
+    "news_blackout_global_tier1": true,
     "trailing_stop_enabled": true,
     "trailing_breakeven_pips": 10.0,
     "trailing_breakeven_lock_pips": 1.0,

@@ -86,6 +86,7 @@ class MT5Engine:
         # Minimum SL improvement before a trailing modification is sent
         self.trailing_step_pips = risk.get("trailing_step_pips", 2.0)
         self.daily_loss_limit_pct = risk.get("daily_loss_limit_pct")
+        self.global_news_blackout = risk.get("news_blackout_global_tier1", True)
         self.min_account_balance_gold = 300.0
 
         # Trading settings
@@ -453,7 +454,10 @@ class MT5Engine:
             try:
                 pre_buffer = self.config.get("risk_parameters", {}).get("news_blackout_pre_mins", 30)
                 post_buffer = self.config.get("risk_parameters", {}).get("news_blackout_post_mins", 15)
-                permitted, reason = is_trade_permitted_by_calendar(symbol, pre_buffer_mins=pre_buffer, post_buffer_mins=post_buffer)
+                permitted, reason = is_trade_permitted_by_calendar(
+                    symbol, pre_buffer_mins=pre_buffer, post_buffer_mins=post_buffer,
+                    global_tier1=self.global_news_blackout,
+                )
                 if not permitted:
                     msg = f"REJECTED: News blackout active for {symbol} ({reason})"
                     logger.warning(msg)
