@@ -19,7 +19,8 @@ This page covers working *inside* the package: what each module does, where runt
 |---|---|
 | `main.py` | `ForexAgent`: analyse all symbols → rank queued signals → execute through the risk walls → closed-trade handling → Asia shadow → daily session review → wait for the next M5 close (trailing checks every 15 s) |
 | `config.json` | Every setting: risk parameters, `session_profiles`, `session_strategies`, symbols, model, services. Read at startup |
-| `Modelfile` | Ollama model `agent-brain:32k` (from `qwen2.5-coder:1.5b`, 32K context) |
+| `Modelfile.8b` | Active Ollama model `agent-brain-8b:8k` (from `qwen3:8b`, 8K context, fits an 8 GB GPU) |
+| `Modelfile` | Previous model `agent-brain:32k` (from `qwen2.5-coder:1.5b`), kept for rollback |
 | `core/mt5_engine.py` | MT5 connection, technicals + H1 trend label, ATR trade geometry, the 14 risk walls (`execute_trade`), daily loss stop, closed-trade enrichment, break-even / trailing manager |
 | `core/mt5_time.py` | Broker server-time offset and UTC-correct history helpers. **Every MT5 history query must use these** |
 | `core/trade_analytics.py` | Pure helpers shared by the engine and the reports: sessions, exit classification, spread/SL ratio, entry windows, H1 strength, signal ranking, wall labels, path simulation |

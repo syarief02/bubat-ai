@@ -776,6 +776,10 @@ class ForexAgent:
 
     def setup_weekly_model_check(self):
         """Schedule the autonomous model upgrade cycle to run weekly."""
+        # Off by default: the upgrade cycle swaps in the first local model that passes a trivial audition
+        if not self.config.get("model_upgrade", {}).get("enabled", False):
+            logger.info("📅 Weekly model upgrade disabled (model_upgrade.enabled = false).")
+            return
         scan_day = "sunday"
         schedule.every().sunday.at("02:00").do(
             lambda: asyncio.ensure_future(self._run_model_upgrade())

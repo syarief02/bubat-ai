@@ -49,7 +49,7 @@ flowchart TD
 
     subgraph Reasoning ["2. Qualitative Tier (local Ollama LLM)"]
         A1 & A2 & A3 & A4 --> C1["Prompt builder"]
-        C1 --> C2["agent-brain:32k"]
+        C1 --> C2["agent-brain-8b:8k"]
         C2 --> C3["TradeDecision JSON: BUY / SELL / WAIT + confidence"]
     end
 
@@ -205,7 +205,8 @@ Runs every **15 seconds** while the agent waits for the next candle:
 * All values are configurable (`trailing_*` keys). Replaying 412 trades on M5 bars, these settings beat the earlier 10/15-pip settings, but **no management** still came out ahead overall. This is tracked daily in `execution_quality.py`.
 
 ### 3. Qualitative LLM Reasoner (`core/agent_logic.py`)
-* Local **Ollama** model `agent-brain:32k`, built from `qwen2.5-coder:1.5b` with a 32K context (`Modelfile`). Temperature 0.1, `num_predict` 800.
+* Local **Ollama** model `agent-brain-8b:8k`, built from `qwen3:8b` with an 8K context (`Modelfile.8b`), sized to run fully on an 8 GB GPU. Temperature 0.1, `num_predict` 800, thinking off (`ollama_think: false`, ~2 s per decision). The chat and assistant read the same `active_model` so Ollama keeps one copy in VRAM.
+* The previous model, `agent-brain:32k` (from `qwen2.5-coder:1.5b`, `Modelfile`), is kept for rollback: set `active_model` back to it.
 * **Multi-tier JSON parser:**
   1. Strict JSON parse plus synonym normalization (`HOLD`/`FLAT` → `WAIT`, `LONG` → `BUY`, `"82%"` → `0.82`, …).
   2. Repair of unclosed strings and brackets.
@@ -312,7 +313,8 @@ bubat AI/
 └── forex_local_agent/
     ├── main.py                        # Orchestrator: analyse -> rank -> execute -> learn -> wait
     ├── config.json                    # All risk, session, strategy and model settings
-    ├── Modelfile                      # Ollama model definition (32K context)
+    ├── Modelfile.8b                   # Ollama model definition: qwen3:8b, 8K context (active)
+    ├── Modelfile                      # Previous model: qwen2.5-coder:1.5b, 32K context (rollback)
     ├── requirements.txt
     ├── chat.py / chat_logger.py       # Interactive chat + secret-scrubbed session log
     ├── local_assistant.py             # Tool-using local assistant
@@ -398,9 +400,9 @@ GEMINI_API_KEY=your_key   # optional
 
 **4. Build the local model**
 ```powershell
-ollama pull qwen2.5-coder:1.5b
+ollama pull qwen3:8b
 cd forex_local_agent
-ollama create agent-brain:32k -f Modelfile
+ollama create agent-brain-8b:8k -f Modelfile.8b
 ```
 
 **5. Prepare MetaTrader 5**
@@ -459,7 +461,7 @@ One block per session (`ASIA`, `LONDON`, `LONDON_NY_OVERLAP`, `NEW_YORK`, `ROLLO
 `enabled`, `mode` (shadow only), `hours_utc`, `exit_hour_utc`, `symbols`, `bb_period`, `bb_dev`, `rsi_low`, `sl_atr`, `sl_floor_pips`, `tp_r`, `promote_after_trades`, `promote_min_avg_r`.
 
 ### Other Sections
-`trading` (symbols, `timeframe: "M5"`, bars, order comment), `model_upgrade` (weekly model scan limits), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
+`trading` (symbols, `timeframe: "M5"`, bars, order comment), `active_model` and `ollama_think` (the model used by the agent, chat and assistant; `false` skips qwen3's hidden reasoning), `model_upgrade` (weekly model scan; off unless `enabled: true`, since it swaps in any model passing a trivial audition), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
 
 ---
 

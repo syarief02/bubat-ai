@@ -109,6 +109,8 @@ class AgentLogic:
 
         self.ollama_url = self.config.get("ollama_base_url", "http://localhost:11434")
         self.default_model = self.config.get("active_model", "agent-brain:32k")
+        # Reasoning models (qwen3): false skips hidden thinking tokens (~2.5x faster). None = not sent
+        self.ollama_think = self.config.get("ollama_think")
         self.rules_path = self.config_path.parent / "learning" / "learned_rules.md"
         self.last_decision_meta: Dict[str, Any] = {}
         self._last_parse_tier: Optional[int] = None
@@ -277,6 +279,8 @@ class AgentLogic:
                 "temperature": 0.1,
             },
         }
+        if self.ollama_think is not None:
+            payload["think"] = self.ollama_think
 
         for q_attempt in range(2):
             try:

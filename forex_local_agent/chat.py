@@ -54,7 +54,19 @@ MAGENTA = "\033[95m"
 RESET = "\033[0m"
 
 OLLAMA_API_BASE = "http://localhost:11434"
-DEFAULT_MODEL = "agent-brain:32k"
+
+
+def _load_model_settings() -> tuple[str, Optional[bool]]:
+    """Share the trading agent's model (config.json) so Ollama keeps a single copy in VRAM."""
+    try:
+        with open(ROOT_DIR / "config.json", "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg.get("active_model", "agent-brain:32k"), cfg.get("ollama_think")
+    except Exception:
+        return "agent-brain:32k", None
+
+
+DEFAULT_MODEL, OLLAMA_THINK = _load_model_settings()
 MAX_AGENT_STEPS = 6
 
 
@@ -360,11 +372,13 @@ When you receive the tool result, synthesize the findings into a clear, structur
             "model": self.model,
             "messages": self.conversation_history,
             "stream": False,
+            # num_ctx comes from the Modelfile; a different value here would load a second copy of the model
             "options": {
                 "temperature": 0.2,
-                "num_ctx": 16384
             }
         }
+        if OLLAMA_THINK is not None:
+            payload["think"] = OLLAMA_THINK
 
         req = urllib.request.Request(
             f"{OLLAMA_API_BASE}/api/chat",

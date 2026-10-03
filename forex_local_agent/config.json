@@ -1,5 +1,6 @@
 {
-  "active_model": "agent-brain:32k",
+  "active_model": "agent-brain-8b:8k",
+  "ollama_think": false,
   "ollama_base_url": "http://localhost:11434",
   "searxng_url": "http://localhost:8080",
   "open_webui_url": "http://localhost:3000",
@@ -99,6 +100,7 @@
     "order_comment": "Bubat AI"
   },
   "model_upgrade": {
+    "enabled": false,
     "scan_interval_days": 7,
     "max_parameter_size_b": 35,
     "architecture_filter": "coder",
