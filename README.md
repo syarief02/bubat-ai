@@ -248,7 +248,11 @@ MT5 stamps deals, ticks and bars in **broker server time** (e.g. UTC+3), and his
 With `"auto_approve": false` and a configured number, each trade proposal is sent over WhatsApp, and the trade executes only if `YES` arrives at `localhost:5055/webhook/approval` within `approval_timeout_seconds`. With `"auto_approve": true` (current), trades are approved automatically but still pass every risk wall. Alerts for executions and rejections are sent either way.
 
 ### 11. Market Intelligence Chat & Local Assistant
-* `chat.py` (`chat.bat`): interactive chat with the local model. It can scan all 29 instruments live and report account status (balance, open positions, floating P&L, today's realized P&L). Sessions are logged to `forex_local_agent/logs/chat_sessions.log`, with secrets scrubbed.
+* `chat.py` (`chat.bat`): interactive chat. It can scan all 29 instruments live and report account status (balance, open positions, floating P&L, today's realized P&L). Sessions are logged to `forex_local_agent/logs/chat_sessions.log`, with secrets scrubbed.
+  * **Knows the bot:** every prompt carries the latest report's results, the simulated baselines, the brain's last assessment and the open proposals (`brain/chat_support.py`).
+  * **Two models:** quick questions use the fast trading model (`qwen3:8b`, about 20 s). "Why / should I / explain / kenapa / patut" questions go to the brain's `gpt-oss:20b` at `chat.deep_think` ("medium"). That takes about 1 minute on weekends (GPU) or a few minutes while trading (CPU). The code gathers the report digest, proposals, brain memory and live technicals for any pair named. Force a mode with `think <question>` or `fast <question>`.
+  * **Replies in your language:** English, or casual Malaysian Malay.
+  * **Owner decisions:** `proposals` lists them. `approve P5` and `reject P5 <reason>` (also `lulus` / `tolak`) ask for y/n confirmation, then run the same gated apply as `brain.bat`. These commands are handled in code: the model has no tool that can approve anything.
 * `local_assistant.py` (`assistant.bat`): a tool-using local assistant (shell commands, file read/write, Supabase queries, MT5 status, web search). The repo-root `local_assistant.py` is a launcher shim for the copy in `forex_local_agent/`.
 
 ---
@@ -507,6 +511,7 @@ python forex_local_agent/tests/test_daily_loss_stop.py
 python forex_local_agent/tests/test_chat_logger.py
 python forex_local_agent/tests/test_market_hours.py       # pause while the FX market is closed
 python forex_local_agent/tests/test_brain.py              # brain validation, gates/rollback, cycle, web parsing
+python forex_local_agent/tests/test_chat_upgrade.py       # chat language, deep routing, bot status, owner decisions
 ```
 
 **Sandboxed end-to-end cycle.** `test_mock_cycle.py` uses the **live MT5 terminal** for data, with `order_send` patched so nothing reaches the broker:
@@ -522,7 +527,7 @@ It covers MT5 connection, bars and H1 trend, news and calendar, the LLM parse, A
 | Runner | What it does |
 |---|---|
 | `run_agent.bat` | Starts Ollama if needed, then runs the trading loop (`main.py`) |
-| `chat.bat` | Interactive market chat with live MT5 scans |
+| `chat.bat` | Chat about the market and your bot: live MT5 scans, deep reasoning for why/should questions, `approve` / `reject` proposals |
 | `assistant.bat` | Tool-using local assistant |
 | `brain.bat` | Shows the brain's latest assessment and proposals; `brain.bat approve P3`, `brain.bat reject P3 reason`, `brain.bat run --force` |
 | `stop_all.bat` | Stops Ollama and all agent processes |

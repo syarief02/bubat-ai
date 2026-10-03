@@ -46,7 +46,7 @@ MAX_OPEN = 6
 DEFAULT_GATES = [
     "tests/test_session_profiles.py", "tests/test_session_strategies.py", "tests/test_execution_upgrade.py",
     "tests/test_cycle5_regressions.py", "tests/test_daily_loss_stop.py", "tests/test_market_hours.py",
-    "tests/test_brain.py",
+    "tests/test_brain.py", "tests/test_chat_upgrade.py",
 ]
 
 

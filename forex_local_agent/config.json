@@ -121,6 +121,11 @@
     "max_questions": 2,
     "max_proposals": 3
   },
+  "chat": {
+    "deep_think": "medium",
+    "deep_think_fallback": ["low"],
+    "deep_num_predict": 6000
+  },
   "alerts": {
     "admin_email_note": "ADMIN_EMAIL loaded from .env",
     "whatsapp_enabled": true

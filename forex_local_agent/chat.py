@@ -43,6 +43,9 @@ try:
 except ImportError:
     MT5Engine = None
 
+from brain import chat_support as cs
+from brain.llm import BrainLLM
+
 # ANSI Colors
 CYAN = "\033[96m"
 GREEN = "\033[92m"
@@ -68,6 +71,21 @@ def _load_model_settings() -> tuple[str, Optional[bool]]:
 
 DEFAULT_MODEL, OLLAMA_THINK = _load_model_settings()
 MAX_AGENT_STEPS = 6
+
+
+def _deep_llm() -> BrainLLM:
+    """The brain's reasoning model for deep questions (CPU while trading, GPU on weekends)."""
+    try:
+        cfg = json.loads((ROOT_DIR / "config.json").read_text(encoding="utf-8"))
+    except Exception:
+        cfg = {}
+    chat_cfg = cfg.get("chat", {})
+    brain_cfg = dict(cfg.get("brain", {}))
+    brain_cfg.update(model=chat_cfg.get("deep_model") or brain_cfg.get("model"),
+                     think=chat_cfg.get("deep_think", "medium"),
+                     think_fallback=chat_cfg.get("deep_think_fallback", ["low"]),
+                     num_predict=chat_cfg.get("deep_num_predict", 6000))
+    return BrainLLM({**cfg, "brain": brain_cfg})
 
 
 class ChatToolExecutor:
@@ -179,6 +197,9 @@ class IntelligentForexChat:
         self.log_file = log_file or DEFAULT_LOG_FILE
         self.executor = ChatToolExecutor()
         self.conversation_history: List[Dict[str, str]] = []
+        # Plain question/answer pairs (no injected scans) for the deep model's short memory
+        self.plain_history: List[Dict[str, str]] = []
+        self.deep_llm = _deep_llm()
         self._build_system_prompt()
 
     def _build_system_prompt(self):
@@ -193,17 +214,21 @@ ACTIVE ENVIRONMENT:
 - Active Market Session: {session.get('session_summary')}
 - High Liquidity Pairs for this Session: {', '.join(session.get('best_pairs_for_session', []))}
 
+YOUR BOT RIGHT NOW (from its latest report and the brain; prefer these numbers over older figures in rules):
+{cs.status_brief()}
+
 STORED LEARNED RULES & MEMORY:
 {rules}
 
 ABSOLUTE OPERATIONAL MANDATES:
 1. NEVER say "As an AI I do not have access to real-time data or the web". You DO have direct access to live MT5 quotes and live web search!
 2. When asked about which pairs to trade, current session setups, or ranking pairs, evaluate the live MT5 scan and news data provided in context.
-3. LANGUAGE DIRECTIVE: If the user speaks Malay, chat in friendly, natural Malaysian Malay ("Bahasa Melayu santai/Malaysia", e.g. "Beres boss, kita bercakap santai-santai", "jom kita tengok market harini", "setup ni nampak cun"). NEVER use formal Indonesian ("berbicara").
-   Example:
-   User: "kita bercakap. bukan berbicara."
-   Response: "Beres boss! Jom kita bercakap santai-santai. Ada apa-apa pair forex yang nak kita kaji malam ni?"
+3. LANGUAGE: reply in the language of the user's latest message (each message says which). English -> English.
+   Malay -> natural, casual Malaysian Malay (e.g. "jom kita tengok market harini", "setup ni nampak cun"), never
+   formal Indonesian ("berbicara"). Do not open every reply with the same phrase.
 4. When asked to remember or learn something, call `learn_new_rule` to store it permanently.
+5. You cannot approve or reject the brain's proposals yourself: tell the owner to type "approve P5" or
+   "reject P5 <reason>" in this chat. For "why / should I" questions the chat uses a deeper reasoning model.
 
 AVAILABLE TOOLS:
 - scan_market_pairs(): Scan all {len(self.executor.scanner.symbols)} configured MT5 instruments (28 forex pairs + XAUUSD), compute RSI, ATR, EMAs, 24h change %, and rank them by opportunity for the active session.
@@ -225,9 +250,35 @@ When you receive the tool result, synthesize the findings into a clear, structur
         ]
 
     def reset(self):
+        self.plain_history = []
         self._build_system_prompt()
 
-    def chat_turn(self, user_prompt: str) -> str:
+    def deep_turn(self, user_prompt: str, language: str) -> Optional[str]:
+        """Answer with the reasoning model over data gathered in code; None if it is unavailable."""
+        on_gpu = self.deep_llm.gpu_layers() is None
+        where, eta = ("GPU", "about 1 min") if on_gpu else ("CPU (trading keeps the GPU)", "about 2-5 min")
+        print(f"\n{MAGENTA}{BOLD}▶ [DEEP REASONING]{RESET} {DIM}{self.deep_llm.model} on {where}, {eta}...{RESET}")
+        data = cs.deep_context()
+        symbols = [s for s in self.executor.scanner.symbols if s.lower() in user_prompt.lower()][:2]
+        for sym in symbols:
+            data.setdefault("live_technicals", {})[sym] = self.executor._tool_get_pair_technicals({"symbol": sym})[:1500]
+        if any(k in user_prompt.lower() for k in ("account", "balance", "equity", "position", "baki", "akaun")):
+            data["account_now"] = self.executor._tool_get_account_status({})
+        messages = [{"role": "system", "content": cs.DEEP_SYSTEM.format(language=language)}]
+        messages += self.plain_history[-6:]
+        messages.append({"role": "user", "content": f"{user_prompt}\n\nDATA:\n{json.dumps(data, default=str)}"})
+        reply = self.deep_llm.ask_chat(messages)
+        if reply:
+            stats = self.deep_llm.last_stats
+            print(f"{DIM}  (reasoned at think={stats.get('think_used')!r}, {stats.get('seconds')}s){RESET}")
+        return reply
+
+    def _remember(self, user_prompt: str, reply: str):
+        self.plain_history += [{"role": "user", "content": user_prompt}, {"role": "assistant", "content": reply}]
+        self.plain_history = self.plain_history[-12:]
+
+    def chat_turn(self, user_prompt: str, mode: str = "auto") -> str:
+        """mode: "auto" (deep for why/should questions), "deep" or "fast"."""
         # Log user message
         log_chat_event(
             session_id=self.session_id,
@@ -243,6 +294,17 @@ When you receive the tool result, synthesize the findings into a clear, structur
             # Refresh system prompt with new learned rule
             self._build_system_prompt()
 
+        language = cs.detect_language(user_prompt)
+        if mode == "deep" or (mode == "auto" and cs.wants_deep(user_prompt)):
+            reply = self.deep_turn(user_prompt, language)
+            if reply:
+                log_chat_event(session_id=self.session_id, role="assistant", content=reply, log_file=self.log_file)
+                self._remember(user_prompt, reply)
+                self.conversation_history += [{"role": "user", "content": user_prompt},
+                                              {"role": "assistant", "content": reply}]
+                return reply
+            print(f"{YELLOW}[Deep model unavailable, answering with the fast model]{RESET}")
+
         # 2. Context Auto-Enrichment:
         # If user asks about market, pairs, session, rankings, trades, or news,
         # fetch real-time MT5 scan and live financial news immediately!
@@ -253,8 +315,8 @@ When you receive the tool result, synthesize the findings into a clear, structur
         ]
         is_market_query = any(k in user_prompt.lower() for k in market_keywords)
 
-        augmented_prompt = user_prompt
-        if is_market_query:
+        augmented_prompt = f"{user_prompt}\n\n[Reply in {language}.]"
+        if is_market_query and not cs.mentions_performance(user_prompt):
             print(f"\n{CYAN}{BOLD}▶ [REAL-TIME ENGINE]{RESET} {DIM}Scanning live MT5 pairs & financial news...{RESET}")
             try:
                 scan_data = self.executor.scanner.scan_and_rank()
@@ -263,7 +325,7 @@ When you receive the tool result, synthesize the findings into a clear, structur
                 news_text = "\n".join([f"- {n['title']} ({n.get('snippet', '')})" for n in news_items])
 
                 augmented_prompt = (
-                    f"{user_prompt}\n\n"
+                    f"{user_prompt}\n\n[Reply in {language}.]\n\n"
                     f"--- LIVE REAL-TIME MT5 MARKET FEED & SESSION DATA ---\n"
                     f"{scan_text}\n\n"
                     f"--- LIVE WEB FINANCIAL NEWS HEADLINES ---\n"
@@ -302,6 +364,7 @@ When you receive the tool result, synthesize the findings into a clear, structur
                     log_file=self.log_file,
                 )
                 self.conversation_history.append({"role": "assistant", "content": response_text})
+                self._remember(user_prompt, response_text)
                 return response_text
 
             tool_name = tool_call.get("name")
@@ -441,10 +504,45 @@ def print_banner(agent: IntelligentForexChat):
     print(f"   • {GREEN}Live MT5 Multi-Pair Scanner{RESET} -> Ranks EURUSD, GBPUSD, USDJPY, Gold, etc.")
     print(f"   • {GREEN}Real-Time Web Surfing{RESET}       -> Google News Financial RSS, live macro news")
     print(f"   • {GREEN}Continuous Learning Memory{RESET}  -> Remembers rules in learned_rules.md & Supabase")
-    print(f"   • {GREEN}Bilingual Intelligence{RESET}      -> Natural Malaysian Malay & English")
+    print(f"   • {GREEN}Bilingual Intelligence{RESET}      -> Replies in your language (English / Malaysian Malay)")
+    print(f"   • {GREEN}Deep Reasoning{RESET}              -> 'why / should I' questions go to {agent.deep_llm.model}")
+    print(f"   • {GREEN}Knows Your Bot{RESET}              -> Latest results, brain assessment, open proposals")
     print("-" * 72)
-    print(f"  Commands: {YELLOW}clear{RESET} (reset memory), {YELLOW}rules{RESET} (view learned rules), {YELLOW}exit{RESET}")
+    print(f"  Commands: {YELLOW}think <q>{RESET} force deep reasoning, {YELLOW}fast <q>{RESET} force quick answer,")
+    print(f"            {YELLOW}proposals{RESET}, {YELLOW}approve P5{RESET}, {YELLOW}reject P5 <reason>{RESET},")
+    print(f"            {YELLOW}clear{RESET} (reset memory), {YELLOW}rules{RESET} (view learned rules), {YELLOW}exit{RESET}")
     print("=" * 72 + "\n")
+
+
+def handle_decision(agent: IntelligentForexChat, action: str, pid: str, reason: str):
+    """Owner's approve/reject typed in the chat: confirmed with y/n, executed by code (never by the model)."""
+    from brain.agent import Brain
+    brain = Brain()
+    p = brain.proposals.get(pid)
+    if not p:
+        print(f"{RED}No proposal {pid}. Type 'proposals' to see the open ones.{RESET}")
+        return
+    if p["status"] != "proposed":
+        print(f"{YELLOW}{pid} is already {p['status']}.{RESET}")
+        return
+    print(f"\n{BOLD}{pid}{RESET} [{p.get('risk')}] {cs.describe(p)}")
+    print(f"{DIM}Why: {p.get('rationale')}\nEvidence: {p.get('evidence')}{RESET}")
+    if input(f"{YELLOW}Confirm {action} {pid}? (y/n) {RESET}").strip().lower() not in ("y", "yes", "ya"):
+        print("Cancelled.")
+        return
+    if action == "reject":
+        brain.proposals.reject(pid, reason)
+        brain.journal.add("owner_decision", id=pid, decision="reject", note=reason, via="chat")
+        print(f"{GREEN}Rejected {pid}.{RESET} The brain will see your reason in its next run.")
+    else:
+        print(f"{DIM}Applying {pid} and running the test suites (about a minute)...{RESET}")
+        last = brain.journal.recent(1, kinds=("observation",))
+        ok, detail = brain.proposals.approve(pid, before=last[-1]["headline"] if last else None)
+        brain.journal.add("owner_decision", id=pid, decision="approve", ok=ok, detail=detail, via="chat")
+        print((f"{GREEN}Applied.{RESET} " if ok else f"{RED}Not applied.{RESET} ") + detail)
+        if ok and p["kind"] != "rule":
+            print(f"{YELLOW}Restart the trading agent (run_agent.bat) for the change to take effect.{RESET}")
+    agent._build_system_prompt()
 
 
 def main():
@@ -471,9 +569,25 @@ def main():
                 print(f"\n{CYAN}{rules}{RESET}")
                 continue
 
+            if user_input.lower() in ("proposals", "cadangan"):
+                print(f"\n{CYAN}{cs.status_brief()}{RESET}")
+                continue
+
+            decision = cs.parse_decision(user_input)
+            if decision:
+                handle_decision(agent, *decision)
+                continue
+
+            mode = "auto"
+            low = user_input.lower()
+            if low.startswith(("think ", "fikir ")):
+                mode, user_input = "deep", user_input.split(" ", 1)[1]
+            elif low.startswith("fast "):
+                mode, user_input = "fast", user_input.split(" ", 1)[1]
+
             # Run intelligent agent turn
             start_time = time.time()
-            response = agent.chat_turn(user_input)
+            response = agent.chat_turn(user_input, mode=mode)
             duration = time.time() - start_time
 
             print(f"\n{MAGENTA}{BOLD}Bubat AI ❯{RESET} {response}")

@@ -3,7 +3,7 @@ import json
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from loguru import logger
@@ -77,16 +77,30 @@ class BrainLLM:
         except Exception as e:
             logger.debug(f"[Brain] placement check skipped: {e}")
 
-    def _generate(self, system: str, prompt: str, think: Any):
+    def ask_chat(self, messages: List[Dict[str, str]], think: Any = None) -> Optional[str]:
+        """Free-text chat reply (for chat.py deep mode), with the same placement and fallback rules."""
+        first = self.think if think is None else think
+        for level in [first] + [lv for lv in self.think_fallback if lv != first]:
+            text, data = self._generate("", "", level, messages=messages)
+            if data is None:
+                return None
+            self.last_stats["think_used"] = level
+            if text.strip() and data.get("done_reason") != "length":
+                return text.strip()
+            logger.warning(f"[Brain] no usable chat reply at think={level!r}; trying the next level")
+        return None
+
+    def _generate(self, system: str, prompt: str, think: Any, messages: List[Dict[str, str]] = None):
         payload = {
             "model": self.model,
-            "system": system,
-            "prompt": prompt,
             "stream": False,
-            "format": "json",
             "think": think,
             "options": {"temperature": 0.3, "num_predict": self.num_predict},
         }
+        if messages is None:
+            payload.update(system=system, prompt=prompt, format="json")
+        else:
+            payload["messages"] = messages
         # Leave num_ctx unset when the brain shares the trading model: a different value would load a second copy
         if self.num_ctx:
             payload["options"]["num_ctx"] = self.num_ctx
@@ -97,7 +111,8 @@ class BrainLLM:
             payload["options"]["num_gpu"] = num_gpu
         self._match_placement(num_gpu)
         try:
-            resp = httpx.post(f"{self.url}/api/generate", json=payload, timeout=self.timeout)
+            endpoint = "/api/generate" if messages is None else "/api/chat"
+            resp = httpx.post(f"{self.url}{endpoint}", json=payload, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
@@ -111,7 +126,8 @@ class BrainLLM:
         if data.get("done_reason") == "length":
             logger.warning(f"[Brain] {self.model} hit num_predict={self.num_predict} at think={think!r} "
                            f"before finishing (thinking used the budget)")
-        return data.get("response", ""), data
+        text = data.get("response", "") if messages is None else (data.get("message") or {}).get("content", "")
+        return text, data
 
 
 def parse_json_object(text: str) -> Optional[Dict[str, Any]]:

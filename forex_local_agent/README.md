@@ -123,6 +123,7 @@ python tests/test_daily_loss_stop.py
 python tests/test_chat_logger.py
 python tests/test_market_hours.py
 python tests/test_brain.py
+python tests/test_chat_upgrade.py
 ```
 
 **Sandboxed end-to-end cycle.** It uses the live terminal for data, with `order_send` patched:
