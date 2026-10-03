@@ -47,6 +47,14 @@ def market_open(now_utc: datetime) -> bool:
     return True
 
 
+def next_market_open(now_utc: datetime) -> datetime:
+    """Next Sunday 21:00 UTC open; `now_utc` itself if the market is already open."""
+    if market_open(now_utc):
+        return now_utc
+    days_to_sunday = (6 - now_utc.weekday()) % 7
+    return (now_utc + timedelta(days=days_to_sunday)).replace(hour=21, minute=0, second=0, microsecond=0)
+
+
 def offset_from_tick_time(tick_epoch: int, now_epoch: float) -> Optional[int]:
     """Derive the server UTC offset (whole hours, in seconds) from a fresh tick.
 

@@ -36,6 +36,10 @@ from core.supabase_manager import SupabaseManager
 from learning.reflexion_store import ReflexionStore, validate_reflexion_rule
 from core.trade_analytics import wall_from_message, rank_signals
 from core.session_strategies import AsiaRangeFadeShadow
+from core.mt5_time import market_open, next_market_open
+
+# While the market is closed, re-check this often (also keeps Ctrl+C and scheduled jobs responsive)
+MARKET_CLOSED_POLL_SECONDS = 900
 
 # ── Logging Configuration ────────────────────────────────────────────────────
 logger.remove()
@@ -625,6 +629,24 @@ class ForexAgent:
 
         return self.running
 
+    def market_closed_wait(self, now_utc: Optional[datetime] = None) -> Optional[float]:
+        """Seconds to sleep before re-checking if the FX market is closed, else None.
+
+        A closed market still serves the last (frozen) bars and weekend spreads, so analysing it
+        only produces signals the spread wall has to reject. Logs once per closed period.
+        """
+        now_utc = now_utc or datetime.now(timezone.utc)
+        if market_open(now_utc):
+            if getattr(self, "_market_closed_logged", False):
+                logger.info("🔔 FX market reopened — resuming analysis.")
+            self._market_closed_logged = False
+            return None
+        reopen = next_market_open(now_utc)
+        if not getattr(self, "_market_closed_logged", False):
+            logger.info(f"💤 FX market closed — pausing analysis until {reopen.strftime('%a %Y-%m-%d %H:%M')} UTC.")
+            self._market_closed_logged = True
+        return max(1.0, min((reopen - now_utc).total_seconds(), MARKET_CLOSED_POLL_SECONDS))
+
     # ── Master Loop ───────────────────────────────────────────────────────
 
     async def main_loop(self):
@@ -662,6 +684,14 @@ class ForexAgent:
                 while self.running:
                     # Run any scheduled tasks (e.g., weekly model check)
                     schedule.run_pending()
+
+                    closed_wait = self.market_closed_wait()
+                    if closed_wait is not None:
+                        while closed_wait > 0 and self.running:
+                            chunk = min(closed_wait, 5)
+                            await asyncio.sleep(chunk)
+                            closed_wait -= chunk
+                        continue
 
                     if first_run:
                         first_run = False
