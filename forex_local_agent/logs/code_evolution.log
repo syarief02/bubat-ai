@@ -438,3 +438,17 @@ This window overlaps cycle #4's real window by ~20h, so findings seen in both ar
 
 ### WATCHLIST
 - execution_quality.py -> asia_shadow_all_time: trades, avg R, promotion_ready.
+
+## [2026-10-03T01:27Z] Per-session execution, no session locked out (owner instruction)
+
+- 669a1a7 feat(sessions): entry_hours_utc -> null (owner-approved loosening). Every session trades
+  under its own profile (symbols, slots, spread cap, loss budget). Session loss budgets sum to the
+  5% daily limit: ASIA 1.0 / LONDON 1.75 / OVERLAP 1.0 / NY 1.0 / ROLLOVER 0.25.
+- Daily grading per session (5-day window, by entry hour), tighten-only below the owner baseline:
+  REDUCED at avg R < -0.15, MINIMAL at < -0.30 (n >= 20); one step up per day at avg R >= 0 (n >= 10).
+- First review 2026-10-03: ASIA MINIMAL (-0.32R, n=148, -$64.81), LONDON NORMAL (-0.11R, n=78,
+  -$1.69), OVERLAP REDUCED (-0.25R, n=115, -$70.84), NY MINIMAL (-0.41R, n=71, -$47.61),
+  ROLLOVER NORMAL (n=7, below min trades; baseline already 2 slots / 3% spread / 0.25% budget).
+- Verification: test_session_profiles 10/10, all other suites OK; restarted 01:24 UTC, first cycle
+  0 errors, SESSION_REVIEW logged and persisted to state/session_levels.json.
+- Watch: per-session R in execution_quality.py -> sessions; level changes in SESSION_REVIEW.
