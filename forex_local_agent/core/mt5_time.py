@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Iterable, List, Optional
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
@@ -30,29 +31,40 @@ PROBE_SYMBOLS = ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD")
 # apart from a different offset, so it is rejected.
 MAX_TICK_AGE_SECONDS = 120
 
+# The FX week opens Sunday and closes Friday at 17:00 New York time (needs the tzdata package on Windows)
+NEW_YORK = ZoneInfo("America/New_York")
+FX_WEEK_HOUR_NY = 17
+
 _cached_offset: Optional[int] = None
 _cached_at: float = 0.0
 CACHE_TTL_SECONDS = 3600
 
 
 def market_open(now_utc: datetime) -> bool:
-    """Spot FX hours: Sunday 21:00 UTC to Friday 21:00 UTC."""
-    wd, h = now_utc.weekday(), now_utc.hour  # Mon=0 .. Sun=6
+    """Spot FX hours: Sunday 17:00 to Friday 17:00 New York time.
+
+    That is 21:00 UTC during US daylight saving time and 22:00 UTC outside it
+    (Malaysia: Monday 05:00/06:00 to Saturday 05:00/06:00); zoneinfo applies the shift.
+    """
+    ny = now_utc.astimezone(NEW_YORK)
+    wd, h = ny.weekday(), ny.hour  # Mon=0 .. Sun=6
     if wd == 5:
         return False
     if wd == 6:
-        return h >= 21
+        return h >= FX_WEEK_HOUR_NY
     if wd == 4:
-        return h < 21
+        return h < FX_WEEK_HOUR_NY
     return True
 
 
 def next_market_open(now_utc: datetime) -> datetime:
-    """Next Sunday 21:00 UTC open; `now_utc` itself if the market is already open."""
+    """Next Sunday 17:00 New York open, in UTC; `now_utc` itself if the market is already open."""
     if market_open(now_utc):
         return now_utc
-    days_to_sunday = (6 - now_utc.weekday()) % 7
-    return (now_utc + timedelta(days=days_to_sunday)).replace(hour=21, minute=0, second=0, microsecond=0)
+    ny = now_utc.astimezone(NEW_YORK)
+    sunday = (ny + timedelta(days=(6 - ny.weekday()) % 7)).date()
+    open_ny = datetime(sunday.year, sunday.month, sunday.day, FX_WEEK_HOUR_NY, tzinfo=NEW_YORK)
+    return open_ny.astimezone(timezone.utc)
 
 
 def offset_from_tick_time(tick_epoch: int, now_epoch: float) -> Optional[int]:

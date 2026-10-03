@@ -17,3 +17,4 @@ loguru
 beautifulsoup4
 html2text
 markdownify
+tzdata  # zoneinfo time zones on Windows (FX week = 17:00 New York, DST-aware)

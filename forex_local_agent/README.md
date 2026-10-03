@@ -78,7 +78,7 @@ On startup, the agent:
 3. runs one full cycle immediately;
 4. then runs one cycle per **M5** candle close.
 
-While the FX market is closed (Friday 21:00 UTC to Sunday 21:00 UTC) it does not analyse or trade. It logs one `FX market closed` line, then re-checks every 15 minutes until the open.
+While the FX market is closed (Friday 17:00 to Sunday 17:00 New York time: 21:00 UTC during US daylight saving time and 22:00 UTC otherwise, which is Saturday to Monday 05:00 or 06:00 in Malaysia. The shift is automatic) it does not analyse or trade. It logs one `FX market closed` line, then re-checks every 15 minutes until the open.
 
 Stop it with `Ctrl+C`. Closing the console window also stops it, without a shutdown log line.
 

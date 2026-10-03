@@ -37,6 +37,23 @@ class TestMarketHours(unittest.TestCase):
         self.assertTrue(market_open(utc(2026, 10, 4, 21, 0)))     # Sun open
         self.assertTrue(market_open(utc(2026, 10, 7, 3, 0)))      # Wed
 
+    def test_winter_hours_follow_new_york(self):
+        # US DST ends Sun 2026-11-01: the week opens/closes at 22:00 UTC (06:00 Malaysia)
+        self.assertTrue(market_open(utc(2026, 11, 6, 21, 30)))    # Fri 16:30 New York: still open
+        self.assertFalse(market_open(utc(2026, 11, 6, 22, 0)))    # Fri 17:00 New York: closed
+        self.assertFalse(market_open(utc(2026, 11, 8, 21, 30)))   # Sun 16:30 New York: not yet
+        self.assertTrue(market_open(utc(2026, 11, 8, 22, 0)))     # Sun 17:00 New York: open
+        self.assertEqual(next_market_open(utc(2026, 11, 7, 12, 0)), utc(2026, 11, 8, 22, 0))
+
+    def test_dst_changeover_weekends(self):
+        # Autumn: closes Fri 2026-10-30 21:00 UTC (EDT), reopens Sun 2026-11-01 22:00 UTC (EST)
+        self.assertFalse(market_open(utc(2026, 10, 30, 21, 0)))
+        self.assertEqual(next_market_open(utc(2026, 10, 31, 9, 0)), utc(2026, 11, 1, 22, 0))
+        # Spring: closes Fri 2027-03-12 22:00 UTC (EST), reopens Sun 2027-03-14 21:00 UTC (EDT)
+        self.assertTrue(market_open(utc(2027, 3, 12, 21, 30)))
+        self.assertFalse(market_open(utc(2027, 3, 12, 22, 0)))
+        self.assertEqual(next_market_open(utc(2027, 3, 13, 9, 0)), utc(2027, 3, 14, 21, 0))
+
     def test_next_market_open(self):
         sunday_open = utc(2026, 10, 4, 21, 0)
         self.assertEqual(next_market_open(utc(2026, 10, 2, 21, 30)), sunday_open)   # Fri after close
