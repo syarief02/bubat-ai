@@ -1,321 +1,135 @@
-# 🤖 Local Autonomous Forex AI Agent (Deterministic Math Engine)
+# 🤖 `forex_local_agent` — Developer Guide
 
-> **A 100% local, self-hosted, private, and autonomous institutional-grade Forex trading system with strict separation of Qualitative LLM Sentiment and Quantitative Python Math Execution.**
+This folder is the Bubat AI trading agent package. **For the full system documentation, see the [root README](../README.md):**
+- architecture and the per-cycle flow;
+- per-session execution and daily grading;
+- the 14 risk walls;
+- the daily post-mortem loop;
+- installation and the configuration reference.
 
----
+This page covers working *inside* the package: what each module does, where runtime files go, and how to check components safely.
 
-## 📌 Executive Summary & Architecture
-
-Modern Large Language Models (LLMs) excel at qualitative reasoning, news synthesis, and macro narrative analysis, but they **hallucinate floating-point arithmetic** and cannot be trusted to calculate live broker prices, pip distances, or dynamic position sizing.
-
-This project solves this fundamental architectural flaw with a **strict two-tier separation of concerns**:
-
-```
- ┌─────────────────────────────────────────────────────────────┐
- │            QUALITATIVE TIER (Ollama AI Brain)               │
- │ • Reads live news headlines & macro sentiment               │
- │ • Evaluates technical indicator structure (RSI, MACD, ATR) │
- │ • Determines MARKET DIRECTION ONLY: BUY / SELL / WAIT       │
- └──────────────────────────────┬──────────────────────────────┘
-                                │ Direction + Confidence
-                                ▼
- ┌─────────────────────────────────────────────────────────────┐
- │       QUANTITATIVE TIER (Deterministic Python Engine)       │
- │ • Calculates ATR volatility-based Stop Loss & Take Profit   │
- │ • Enforces broker minimum stops distance (TRADE_STOPS_LEVEL)│
- │ • Calculates dynamic lot size from %-of-balance risk formula │
- │ • Clamps lots between broker VOLUME_MIN and config MAX      │
- └──────────────────────────────┬──────────────────────────────┘
-                                │ Formatted Proposal
-                                ▼
- ┌─────────────────────────────────────────────────────────────┐
- │            HUMAN-IN-THE-LOOP (OpenClaw Bridge)              │
- │ • Dispatches exact computed trade parameters to WhatsApp    │
- │ • Waits for trader approval ("YES" / "NO")                  │
- └──────────────────────────────┬──────────────────────────────┘
-                                │ If "YES"
-                                ▼
- ┌─────────────────────────────────────────────────────────────┐
- │         DETERMINISTIC RISK WALL (MetaTrader 5 Engine)       │
- │ • Maximum open trades gatekeeper (rejects if exceeded)      │
- │ • Maximum drawdown safety barrier                           │
- │ • Dispatches atomic order to MT5 via order_send()           │
- └─────────────────────────────────────────────────────────────┘
-```
+> ⚠️ **Live-account safety:** `main.py`, `ForexAgent.run_analysis_cycle()` and `MT5Engine.execute_trade()` can place **real orders** on whatever account the MT5 terminal is logged into. Use a demo account, and use only the read-only checks and offline tests below while developing.
 
 ---
 
-## 📁 Project Directory Map
+## 📁 Module Map
 
-```
-bubat AI/
-├── .env                                  # Workspace environment variables (Supabase, API keys)
-├── .gitignore                            # Protection against committing secrets, logs, cache
-├── README.md                             # Complete documentation and user guide
-├── Local_Autonomous_Forex_AI_Master_Blueprint.txt # Original system specification
-└── forex_local_agent/                    # Core agent codebase
-    ├── config.json                       # Central system configuration
-    ├── Modelfile                         # Custom Ollama model specification (32k context)
-    ├── requirements.txt                  # Python dependencies
-    ├── main.py                           # Master orchestration loop & candle monitor
-    │
-    ├── core/
-    │   ├── agent_logic.py                # Qualitative LLM reasoning (Ollama + Pydantic)
-    │   ├── mt5_engine.py                 # MT5 driver + Deterministic ATR Math Calculator
-    │   ├── openclaw_bridge.py            # WhatsApp approval gateway & email alerts
-    │   └── sentiment_engine.py           # SearXNG news engine + live RSS fallback
-    │
-    ├── learning/
-    │   ├── memory_manager.py             # ChromaDB / Mem0 episodic memory & recall
-    │   ├── skill_factory.py              # Dynamic self-coding tool generator
-    │   ├── learned_rules.md              # Auto-appended trading rules from loss reflexion
-    │   └── skills/
-    │       ├── template_skill.py         # Base template for dynamic skills
-    │       └── skills_index.json         # Registry of active skills
-    │
-    ├── maintenance/
-    │   └── model_updater.py              # Automated weekly model discovery & hot-swapper
-    │
-    └── logs/
-        ├── trades.log                    # Historical log of all proposed/executed trades
-        ├── system_errors.log             # Exception traces and critical diagnostics
-        └── model_auditions.log           # Benchmark results from model upgrade tests
-```
+| Path | Responsibility |
+|---|---|
+| `main.py` | `ForexAgent`: analyse all symbols → rank queued signals → execute through the risk walls → closed-trade handling → Asia shadow → daily session review → wait for the next M5 close (trailing checks every 15 s) |
+| `config.json` | Every setting: risk parameters, `session_profiles`, `session_strategies`, symbols, model, services. Read at startup |
+| `Modelfile` | Ollama model `agent-brain:32k` (from `qwen2.5-coder:1.5b`, 32K context) |
+| `core/mt5_engine.py` | MT5 connection, technicals + H1 trend label, ATR trade geometry, the 14 risk walls (`execute_trade`), daily loss stop, closed-trade enrichment, break-even / trailing manager |
+| `core/mt5_time.py` | Broker server-time offset and UTC-correct history helpers. **Every MT5 history query must use these** |
+| `core/trade_analytics.py` | Pure helpers shared by the engine and the reports: sessions, exit classification, spread/SL ratio, entry windows, H1 strength, signal ranking, wall labels, path simulation |
+| `core/session_profiles.py` | `SessionManager`: per-session symbols, slots, spread cap, loss budget; daily `NORMAL / REDUCED / MINIMAL` grading |
+| `core/session_strategies.py` | `AsiaRangeFadeShadow`: Asia range-fade paper trading (never sends orders) |
+| `core/agent_logic.py` | LLM prompt, multi-tier JSON parser, synonym normalizer, circuit breaker, `last_decision_meta` |
+| `core/market_scanner.py` | 29-instrument technical scan and opportunity ranking (used by chat) |
+| `core/sentiment_engine.py`, `core/web_surfer.py` | Live news: SearXNG probe, RSS fallback, concurrent article fetch |
+| `core/openclaw_bridge.py` | WhatsApp proposals and alerts, approval webhook on `:5055` |
+| `core/supabase_manager.py` | Decisions, executions, rules and telemetry to Supabase |
+| `learning/rules_loader.py` | Curated rule selection for prompts (2,500-char cap for trading) |
+| `learning/reflexion_store.py` | Loss-reflexion validation, quarantine, persisted processed tickets |
+| `learning/continuous_learner.py`, `memory_manager.py`, `skill_factory.py` | Instruction capture, ChromaDB episodic memory, skill generation |
+| `learning/skills/` | Economic calendar blackout and currency correlation filters (used as risk walls) |
+| `maintenance/daily_report.py` | 24h post-mortem: metrics, breakdowns, wall counterfactuals, LLM vs baselines |
+| `maintenance/execution_quality.py` | Entry timing, management, spread cost, per-session breakdown, Asia shadow progress |
+| `maintenance/model_updater.py` | Weekly model discovery and hot-swap |
+| `chat.py`, `chat_logger.py` | Market chat with live scans and account status; secret-scrubbed session log |
+| `local_assistant.py` | Tool-using local assistant (the repo-root `local_assistant.py` is a launcher shim for this file) |
 
 ---
 
-## ⚙️ Core Subsystems
+## 🗂️ Runtime Files
 
-### 1. Deterministic Math Engine (`core/mt5_engine.py`)
-Computes trade geometry mathematically without LLM hallucination:
-- **BUY Orders**:
-  $$\text{Entry Price} = \text{Ask}$$
-  $$\text{Stop Loss} = \text{Entry} - (\text{ATR}_{14} \times \text{Multiplier}_{\text{SL}})$$
-  $$\text{Take Profit} = \text{Entry} + (\text{ATR}_{14} \times \text{Multiplier}_{\text{TP}})$$
-- **SELL Orders**:
-  $$\text{Entry Price} = \text{Bid}$$
-  $$\text{Stop Loss} = \text{Entry} + (\text{ATR}_{14} \times \text{Multiplier}_{\text{SL}})$$
-  $$\text{Take Profit} = \text{Entry} - (\text{ATR}_{14} \times \text{Multiplier}_{\text{TP}})$$
-- **Dynamic Lot Sizing**:
-  $$\text{Monetary Risk} = \text{Account Balance} \times \left(\frac{\text{risk\_per\_trade\_pct}}{100}\right)$$
-  $$\text{Loss Per Lot} = \left(\frac{|\text{Entry} - \text{SL}|}{\text{Tick Size}}\right) \times \text{Tick Value}$$
-  $$\text{Calculated Lot} = \frac{\text{Monetary Risk}}{\text{Loss Per Lot}}$$
-- **Broker Stops Guard**:
-  Inspects the broker's `SYMBOL_TRADE_STOPS_LEVEL`. If the ATR-calculated stop loss sits closer than the broker's minimum allowable distance, the stop is widened automatically to satisfy broker constraints.
-- **Volume Step Clamping**:
-  Floors volume to the broker's `volume_step`, bounded by `volume_min`, `volume_max`, and `max_lot_size`.
-
-### 2. Qualitative Sentiment Engine (`core/agent_logic.py`)
-- Interfaces with local **Ollama** (`agent-brain:32k`).
-- Receives sanitized technical summaries (RSI, MACD, ATR values, recent candle price action) and fundamental news headlines.
-- Returns strictly structured JSON validated by Pydantic:
-  ```json
-  {
-    "market_sentiment": "BULLISH",
-    "decision": "BUY",
-    "confidence_score": 0.85,
-    "reasoning": "Strong bullish divergence on RSI accompanied by positive macro data."
-  }
-  ```
-- Any parse failures trigger an automatic 3-retry repair loop.
-
-### 3. Resilient News Pipeline (`core/sentiment_engine.py`)
-- **Primary Search**: Queries a local SearXNG instance on `http://localhost:8080/search`.
-- **Automatic Fallback**: If SearXNG or Docker is offline, it automatically switches to live Google Financial RSS feeds and ForexFactory weekly calendar events, ensuring the analysis loop never stalls.
-- **Article Scraping**: Uses `crawl4ai` (or an optimized `httpx` + `BeautifulSoup` + `html2text` fallback) to parse clean markdown for news context.
-
-### 4. Human-In-The-Loop Approval (`core/openclaw_bridge.py`)
-- High-confidence signals ($\ge 80\%$) trigger a WhatsApp proposal via the OpenClaw gateway.
-- Example WhatsApp proposal:
-  ```
-  PROPOSAL: BUY EURUSD
-  Lot: 0.10 | Entry: 1.08720
-  SL: 1.08450 | TP: 1.09260
-  ATR: 0.00180 | R:R 1:2.0
-  Risk: $22.18 | Confidence: 85%
-  Reason: Bullish momentum with positive European macroeconomic data.
-  Reply YES to execute or NO to abort.
-  ```
-- Listens on webhook `http://localhost:5055/webhook/approval`. If `YES` is received within 300 seconds, the trade executes; otherwise, it is cancelled.
-
-### 5. Reflexion Self-Learning Engine (`learning/memory_manager.py`)
-- At the end of every candle cycle, historical deal history is checked.
-- If a closed trade resulted in a loss, a post-mortem is dispatched to Ollama to isolate the root cause.
-- A concise rule is extracted and automatically appended to `learning/learned_rules.md`.
-- These rules are injected into every future trading prompt so the AI never repeats the same mistake twice.
-
----
-
-## 🛠️ System Requirements
-
-| Component | Minimum | Recommended (Tested Configuration) |
+| Location | Contents | In git? |
 |---|---|---|
-| **OS** | Windows 10/11 64-bit | Windows 11 64-bit |
-| **CPU** | 6-core Intel / AMD | Intel Core i5 / i7 / Ryzen 5 / 7 |
-| **GPU** | NVIDIA GTX 1660 (6GB) | NVIDIA RTX 4060 (8GB VRAM) or higher |
-| **RAM** | 16 GB | 32 GB DDR4 / DDR5 |
-| **Python** | 3.10+ | Python 3.13.2 |
-| **Broker Terminal** | MetaTrader 5 Build 4000+ | MetaTrader 5 Build 5.0.6231 |
+| `logs/agent.log` | Full INFO log incl. `Cycle stats` and `SESSION_REVIEW` | No |
+| `logs/trades.log`, `logs/system_errors.log` | Trade results; ERROR traces | No |
+| `logs/chat_sessions.log` | Chat / assistant transcripts (secrets scrubbed) | No |
+| `logs/code_evolution.log` | Public audit trail of improvement cycles (contains no account details) | **Yes** |
+| `state/mt5_server_offset.json` | Measured broker UTC offset (e.g. `10800` = UTC+3) | No |
+| `state/processed_tickets.json` | Closed tickets already reflected on | No |
+| `state/session_levels.json` | Current session grading levels + last review | No |
+| `state/asia_shadow_open.json`, `state/asia_shadow_trades.jsonl` | Asia paper trades (open / resolved) | No |
+| `learning/reflexion_candidates.jsonl` | Quarantined reflexion rules (never injected) | No |
+| `reports/` | JSON from `daily_report.py` and `execution_quality.py` | No |
+
+To reset the session grading, stop the agent and delete `state/session_levels.json`. All sessions start from `NORMAL` and are re-graded on the first cycle.
 
 ---
 
-## 🚀 Complete Setup & Installation Guide
+## 🚀 Running
 
-### Step 1: Ensure Python is on PATH
-Verify Python is available:
+From the repo root, use `run_agent.bat`, which starts Ollama if needed. Or run it directly:
 ```powershell
-python --version
-```
-
-### Step 2: Install Python Dependencies
-Open PowerShell in the project directory and install the packages:
-```powershell
-cd "c:\Users\User\OneDrive\Desktop\bubat AI\forex_local_agent"
-python -m pip install -r requirements.txt
-```
-
-### Step 3: Configure Ollama & Build the Model
-1. Ensure Ollama is running in the background:
-   ```powershell
-   ollama serve
-   ```
-   *(If not running, you can launch it in a separate terminal or let the system daemon run it).*
-2. Verify Ollama is listening:
-   ```powershell
-   curl http://localhost:11434/
-   # Should return: "Ollama is running"
-   ```
-3. Pull the base model and create the 32K context model:
-   ```powershell
-   ollama pull qwen2.5-coder:1.5b
-   # Or for 8GB VRAM: ollama pull qwen2.5-coder:7b
-   ollama create agent-brain:32k -f Modelfile
-   ```
-4. Verify the model exists:
-   ```powershell
-   ollama list
-   ```
-
-### Step 4: Configure MetaTrader 5
-1. Launch your MetaTrader 5 terminal: `C:\Program Files\MetaTrader 5\terminal64.exe`.
-2. Log into your broker account (e.g. **Tickmill-Demo**).
-3. **CRITICAL STEP**: Enable Automated Trading in MT5:
-   - In MT5 top menu: **Tools** $\rightarrow$ **Options** $\rightarrow$ **Expert Advisors**.
-   - Check **"Allow Algo Trading"**.
-   - Check **"Allow DLL imports"**.
-   - Click **OK**.
-   - Make sure the green **"Algo Trading"** button on the toolbar is enabled.
-
-### Step 5: Verify Central Configuration (`config.json`)
-Open `forex_local_agent/config.json` and review the settings:
-```json
-{
-  "active_model": "agent-brain:32k",
-  "ollama_base_url": "http://localhost:11434",
-  "searxng_url": "http://localhost:8080",
-  "open_webui_url": "http://localhost:3000",
-  "openclaw_webhook_port": 5055,
-  "mt5_credentials": {
-    "login": [REDACTED_ACCOUNT],
-    "password": "",
-    "server": "Tickmill-Demo",
-    "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
-  },
-  "risk_parameters": {
-    "max_lot_size": 0.1,
-    "max_drawdown_pct": 2.0,
-    "max_open_trades": 3,
-    "confidence_threshold": 0.80,
-    "approval_timeout_seconds": 300,
-    "risk_per_trade_pct": 1.5,
-    "atr_period": 14,
-    "atr_multiplier_sl": 1.5,
-    "atr_multiplier_tp": 3.0
-  },
-  "trading": {
-    "symbols": ["EURUSD"],
-    "timeframe": "H1",
-    "analysis_bars": 100,
-    "max_news_tokens": 4000
-  },
-  "alerts": {
-    "admin_email": "[REDACTED_EMAIL]",
-    "whatsapp_enabled": true
-  }
-}
-```
-
----
-
-## 🏃 Running the Agent
-
-### Start the Live Agent Loop
-Run the orchestrator from PowerShell:
-```powershell
-cd "c:\Users\User\OneDrive\Desktop\bubat AI\forex_local_agent"
+cd forex_local_agent
 python main.py
 ```
+On startup, the agent:
+1. starts the approval webhook on port 5055;
+2. connects to MT5;
+3. runs one full cycle immediately;
+4. then runs one cycle per **M5** candle close.
 
-### What Happens on Startup:
-1. **Background Webhook**: Starts a FastAPI server on port `5055` to listen for WhatsApp approval responses.
-2. **MT5 Handshake**: Connects to the local MT5 terminal and verifies account balance and equity.
-3. **Immediate Analysis**: Executes an initial full market cycle on launch so you don't have to wait for the next candle close.
-4. **Candle Synchronizer**: Calculates the remaining seconds until the next H1 candle close (top of the hour) and sleeps in resilient non-blocking intervals.
-
----
-
-## 🧪 Testing Subsystems Independently
-
-You can verify any component in isolation using single-line Python commands:
-
-### 1. Test MT5 Connection & Indicator Calculation
-```powershell
-python -c "from core.mt5_engine import MT5Engine; e = MT5Engine('config.json'); e.initialize(); print(e.get_technical_data('EURUSD')); e.shutdown()"
-```
-
-### 2. Test Live News Scraper & Fallback
-```powershell
-python -c "import asyncio; from core.sentiment_engine import SentimentEngine; asyncio.run(SentimentEngine('config.json').get_live_news('EURUSD'))"
-```
-
-### 3. Test Ollama AI Reasoning
-```powershell
-python -c "import asyncio; from core.agent_logic import AgentLogic; al = AgentLogic('config.json'); print(asyncio.run(al.query_ollama('Ping test', 'You are an AI assistant.')))"
-```
-
-### 4. Test Single Trading Cycle Dry Run
-```powershell
-python -c "import asyncio; from main import ForexAgent; a = ForexAgent(); a.mt5_engine.initialize(); asyncio.run(a.run_analysis_cycle('EURUSD')); a.mt5_engine.shutdown()"
-```
+Stop it with `Ctrl+C`. Closing the console window also stops it, without a shutdown log line.
 
 ---
 
-## 🛡️ Risk Management & Safety Limits
+## 🔍 Read-Only Component Checks
 
-| Parameter | Default | Purpose |
-|---|---|---|
-| `risk_per_trade_pct` | `1.5%` | Account equity percentage risked per trade |
-| `max_drawdown_pct` | `2.0%` | Hard stop threshold; orders exceeding this are aborted |
-| `max_open_trades` | `3` | Maximum concurrent positions allowed |
-| `max_lot_size` | `0.10` | Hard cap on lot size regardless of calculation |
-| `confidence_threshold`| `0.80` | Minimum confidence required to propose a trade |
-| `approval_timeout` | `300s` | Auto-aborts proposals if WhatsApp approval is not received within 5 minutes |
+Run these from `forex_local_agent/`. None of them place orders:
+
+```powershell
+# MT5 connection + M5 technicals with the H1 trend label
+python -c "from core.mt5_engine import MT5Engine; e = MT5Engine('config.json'); e.initialize(); print(e.get_technical_data('EURUSD', 'M5')); e.shutdown()"
+
+# Broker server-time offset (seconds; 10800 = UTC+3)
+python -c "import MetaTrader5 as mt5; mt5.initialize(); from core.mt5_time import get_server_utc_offset_seconds as g; print(g(force=True)); mt5.shutdown()"
+
+# Live news for one pair (SearXNG or RSS fallback)
+python -c "import asyncio; from core.sentiment_engine import SentimentEngine; print(asyncio.run(SentimentEngine('config.json').get_live_news('EURUSD')))"
+
+# Ollama reachability
+python -c "import asyncio; from core.agent_logic import AgentLogic; print(asyncio.run(AgentLogic('config.json').query_ollama('Ping test', 'You are an AI assistant.')))"
+
+# Current session profiles and grading levels
+python -c "import json; from core.session_profiles import SessionManager, SESSIONS; m = SessionManager(json.load(open('config.json'))); [print(s, m.profile(s)) for s in SESSIONS]"
+
+# Reports (read-only, JSON saved to reports/)
+python maintenance/daily_report.py --hours 24
+python maintenance/execution_quality.py --hours 24
+```
 
 ---
 
-## ❓ Frequently Asked Questions (FAQ)
+## 🧪 Tests
 
-#### Q: Does this require an active Internet connection?
-**A:** MT5 needs an internet connection to reach your broker server, and the news scraper fetches live macro headlines. However, **all AI model inference is 100% local** via Ollama on your RTX 4060 GPU with zero external LLM API costs or rate limits.
+**Offline suites.** MT5 is mocked and `order_send` is blocked:
+```powershell
+python tests/test_session_profiles.py
+python tests/test_session_strategies.py
+python tests/test_execution_upgrade.py
+python tests/test_cycle5_regressions.py
+python tests/test_daily_loss_stop.py
+python tests/test_chat_logger.py
+```
 
-#### Q: How does the agent handle Docker if I don't have it?
-**A:** Docker is optional. If local SearXNG is not found, the agent automatically falls back to live financial RSS news streams and the ForexFactory economic calendar.
+**Sandboxed end-to-end cycle.** It uses the live terminal for data, with `order_send` patched:
+```powershell
+python tests/test_mock_cycle.py
+```
 
-#### Q: Where are the logs stored?
-**A:**
-- Trade decisions & execution results: `forex_local_agent/logs/trades.log`
-- System errors & exceptions: `forex_local_agent/logs/system_errors.log`
-- Reflexion rules: `forex_local_agent/learning/learned_rules.md`
+---
 
-#### Q: How do I stop the agent gracefully?
-**A:** Press `Ctrl + C` in the PowerShell terminal. The agent intercepts the SIGINT signal, closes any open webhook sockets, cleanly terminates the MT5 connection, and exits safely.
+## 🧭 Development Rules
+
+These are the rules the daily post-mortem cycle follows. Please keep to them in manual changes too:
+- **The LLM picks direction only.** Prices, lots, SL/TP and risk checks stay in deterministic Python.
+- **Use `core/mt5_time.py` for MT5 history.** Never pass plain UTC datetimes to `history_deals_get` / `copy_ticks_range`.
+- **Risk walls fail closed.** A check that raises must reject the trade.
+- **Prove new strategies in shadow mode first.** Anything that adds risk (bigger lots, more open trades, a lower threshold, a smaller SL floor, a loosened wall, new symbols) needs the owner's approval.
+- **Bug fixes need tests.** Every fix gets an offline regression test, and no test may send a real order.
+- **No secrets in the repo.** No credentials or account details in tracked files or in `logs/code_evolution.log`. Secrets belong in the repo-root `.env`, which is gitignored.
