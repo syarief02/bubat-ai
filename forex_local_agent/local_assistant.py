@@ -52,6 +52,7 @@ except ImportError:
     from chat_logger import log_chat_event, scrub_secrets, DEFAULT_LOG_FILE
 
 from dotenv import load_dotenv
+from brain.chat_support import detect_language
 
 env_file = WORKSPACE_DIR / ".env"
 if env_file.exists():
@@ -364,7 +365,7 @@ STORED LEARNED RULES & MEMORY:
 OPERATIONAL DIRECTIVES:
 1. NEVER say "As an AI I do not have access to real-time data or the internet". You DO have direct access via your tools!
 2. When asked about forex pairs, market sessions, setups, or rankings, evaluate the live MT5 scan and live financial news provided in context.
-3. If the user speaks Malay, use natural, friendly Malaysian Malay ("Bahasa Melayu santai/Malaysia", e.g. "Beres boss, jom kita bercakap", "setup ni nampak cun"). NEVER use formal Indonesian ("berbicara").
+3. LANGUAGE: reply in English by default. Each message ends with "[Reply in X.]": follow it. Only when it says Malay, use natural, casual Malaysian Malay ("setup ni nampak cun"), never formal Indonesian ("berbicara").
 4. If a tool fails, analyze the error output and adjust your approach autonomously.
 
 AVAILABLE TOOLS:
@@ -413,7 +414,8 @@ Output ONLY a JSON block when invoking a tool:
             "eurusd", "usdjpy", "gbpusd", "gold", "xauusd", "rsi", "indicator",
             "pasaran", "mata wang", "pilihan"
         ]
-        augmented_prompt = user_prompt
+        language = detect_language(user_prompt)
+        augmented_prompt = f"{user_prompt}\n\n[Reply in {language}.]"
         if any(k in user_prompt.lower() for k in market_keywords):
             print(f"\n{CYAN}{BOLD}▶ [REAL-TIME ENGINE]{RESET} {DIM}Scanning live MT5 pairs & financial news...{RESET}")
             try:
@@ -423,7 +425,7 @@ Output ONLY a JSON block when invoking a tool:
                 news_text = "\n".join([f"- {n['title']} ({n.get('snippet', '')})" for n in news])
 
                 augmented_prompt = (
-                    f"{user_prompt}\n\n"
+                    f"{user_prompt}\n\n[Reply in {language}.]\n\n"
                     f"--- LIVE REAL-TIME MT5 MARKET FEED & SESSION DATA ---\n"
                     f"{scan_text}\n\n"
                     f"--- LIVE WEB FINANCIAL NEWS HEADLINES ---\n"

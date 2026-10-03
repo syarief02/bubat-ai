@@ -3,7 +3,7 @@ import json
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 from loguru import logger
@@ -77,11 +77,16 @@ class BrainLLM:
         except Exception as e:
             logger.debug(f"[Brain] placement check skipped: {e}")
 
-    def ask_chat(self, messages: List[Dict[str, str]], think: Any = None) -> Optional[str]:
-        """Free-text chat reply (for chat.py deep mode), with the same placement and fallback rules."""
+    def ask_chat(self, messages: List[Dict[str, str]], think: Any = None,
+                 on_text: Callable[[str], None] = None, on_thinking: Callable[[int], None] = None) -> Optional[str]:
+        """Free-text chat reply (for chat.py deep mode), with the same placement and fallback rules.
+
+        With `on_text` the reply is streamed: on_text gets each piece of the answer as it is written,
+        on_thinking the running count of reasoning characters (so a slow CPU answer shows progress).
+        """
         first = self.think if think is None else think
         for level in [first] + [lv for lv in self.think_fallback if lv != first]:
-            text, data = self._generate("", "", level, messages=messages)
+            text, data = self._generate("", "", level, messages=messages, on_text=on_text, on_thinking=on_thinking)
             if data is None:
                 return None
             self.last_stats["think_used"] = level
@@ -90,10 +95,12 @@ class BrainLLM:
             logger.warning(f"[Brain] no usable chat reply at think={level!r}; trying the next level")
         return None
 
-    def _generate(self, system: str, prompt: str, think: Any, messages: List[Dict[str, str]] = None):
+    def _generate(self, system: str, prompt: str, think: Any, messages: List[Dict[str, str]] = None,
+                  on_text: Callable[[str], None] = None, on_thinking: Callable[[int], None] = None):
+        stream = on_text is not None
         payload = {
             "model": self.model,
-            "stream": False,
+            "stream": stream,
             "think": think,
             "options": {"temperature": 0.3, "num_predict": self.num_predict},
         }
@@ -112,9 +119,12 @@ class BrainLLM:
         self._match_placement(num_gpu)
         try:
             endpoint = "/api/generate" if messages is None else "/api/chat"
-            resp = httpx.post(f"{self.url}{endpoint}", json=payload, timeout=self.timeout)
-            resp.raise_for_status()
-            data = resp.json()
+            if stream:
+                data = self._stream(f"{self.url}{endpoint}", payload, on_text, on_thinking)
+            else:
+                resp = httpx.post(f"{self.url}{endpoint}", json=payload, timeout=self.timeout)
+                resp.raise_for_status()
+                data = resp.json()
         except Exception as e:
             logger.error(f"[Brain] Ollama request failed: {e}")
             return "", None
@@ -128,6 +138,30 @@ class BrainLLM:
                            f"before finishing (thinking used the budget)")
         text = data.get("response", "") if messages is None else (data.get("message") or {}).get("content", "")
         return text, data
+
+    def _stream(self, url: str, payload: Dict[str, Any], on_text, on_thinking) -> Dict[str, Any]:
+        """Read Ollama's line-delimited stream; returns the final chunk with the full text and thinking."""
+        content, thinking, final = [], [], {}
+        with httpx.stream("POST", url, json=payload, timeout=self.timeout) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                msg = chunk.get("message") or {}
+                if msg.get("thinking"):
+                    thinking.append(msg["thinking"])
+                    if on_thinking:
+                        on_thinking(sum(map(len, thinking)))
+                piece = msg.get("content") or chunk.get("response") or ""
+                if piece:
+                    content.append(piece)
+                    on_text(piece)
+                if chunk.get("done"):
+                    final = chunk
+        final["message"] = {"role": "assistant", "content": "".join(content)}
+        final["thinking"] = "".join(thinking)
+        return final
 
 
 def parse_json_object(text: str) -> Optional[Dict[str, Any]]:

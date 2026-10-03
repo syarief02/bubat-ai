@@ -200,6 +200,7 @@ class IntelligentForexChat:
         # Plain question/answer pairs (no injected scans) for the deep model's short memory
         self.plain_history: List[Dict[str, str]] = []
         self.deep_llm = _deep_llm()
+        self.last_streamed = False   # the deep answer was already printed while it streamed
         self._build_system_prompt()
 
     def _build_system_prompt(self):
@@ -223,9 +224,9 @@ STORED LEARNED RULES & MEMORY:
 ABSOLUTE OPERATIONAL MANDATES:
 1. NEVER say "As an AI I do not have access to real-time data or the web". You DO have direct access to live MT5 quotes and live web search!
 2. When asked about which pairs to trade, current session setups, or ranking pairs, evaluate the live MT5 scan and news data provided in context.
-3. LANGUAGE: reply in the language of the user's latest message (each message says which). English -> English.
-   Malay -> natural, casual Malaysian Malay (e.g. "jom kita tengok market harini", "setup ni nampak cun"), never
-   formal Indonesian ("berbicara"). Do not open every reply with the same phrase.
+3. LANGUAGE: reply in English by default. Each message ends with "[Reply in X.]": follow it. Only when it
+   says Malay, use natural, casual Malaysian Malay (e.g. "jom kita tengok market harini"), never formal
+   Indonesian ("berbicara"). Do not open every reply with the same phrase.
 4. When asked to remember or learn something, call `learn_new_rule` to store it permanently.
 5. You cannot approve or reject the brain's proposals yourself: tell the owner to type "approve P5" or
    "reject P5 <reason>" in this chat. For "why / should I" questions the chat uses a deeper reasoning model.
@@ -264,13 +265,32 @@ When you receive the tool result, synthesize the findings into a clear, structur
             data.setdefault("live_technicals", {})[sym] = self.executor._tool_get_pair_technicals({"symbol": sym})[:1500]
         if any(k in user_prompt.lower() for k in ("account", "balance", "equity", "position", "baki", "akaun")):
             data["account_now"] = self.executor._tool_get_account_status({})
+        if cs.wants_news(user_prompt):
+            print(f"  {DIM}fetching the latest headlines...{RESET}")
+            data["news_untrusted"] = cs.news_context(self.executor.surfer, symbols)
         messages = [{"role": "system", "content": cs.DEEP_SYSTEM.format(language=language)}]
         messages += self.plain_history[-6:]
         messages.append({"role": "user", "content": f"{user_prompt}\n\nDATA:\n{json.dumps(data, default=str)}"})
-        reply = self.deep_llm.ask_chat(messages)
+
+        started = {"answer": False}
+
+        def on_thinking(chars: int):
+            if not started["answer"]:
+                sys.stdout.write(f"\r  {DIM}thinking... {chars // 4} words so far{RESET}   ")
+                sys.stdout.flush()
+
+        def on_text(piece: str):
+            if not started["answer"]:
+                started["answer"] = True
+                sys.stdout.write(f"\r{' ' * 60}\r\n{MAGENTA}{BOLD}Bubat AI ❯{RESET} ")
+            sys.stdout.write(piece)
+            sys.stdout.flush()
+
+        reply = self.deep_llm.ask_chat(messages, on_text=on_text, on_thinking=on_thinking)
         if reply:
+            self.last_streamed = started["answer"]
             stats = self.deep_llm.last_stats
-            print(f"{DIM}  (reasoned at think={stats.get('think_used')!r}, {stats.get('seconds')}s){RESET}")
+            print(f"\n{DIM}  (reasoned at think={stats.get('think_used')!r}, {stats.get('seconds')}s){RESET}")
         return reply
 
     def _remember(self, user_prompt: str, reply: str):
@@ -279,6 +299,7 @@ When you receive the tool result, synthesize the findings into a clear, structur
 
     def chat_turn(self, user_prompt: str, mode: str = "auto") -> str:
         """mode: "auto" (deep for why/should questions), "deep" or "fast"."""
+        self.last_streamed = False
         # Log user message
         log_chat_event(
             session_id=self.session_id,
@@ -504,7 +525,7 @@ def print_banner(agent: IntelligentForexChat):
     print(f"   • {GREEN}Live MT5 Multi-Pair Scanner{RESET} -> Ranks EURUSD, GBPUSD, USDJPY, Gold, etc.")
     print(f"   • {GREEN}Real-Time Web Surfing{RESET}       -> Google News Financial RSS, live macro news")
     print(f"   • {GREEN}Continuous Learning Memory{RESET}  -> Remembers rules in learned_rules.md & Supabase")
-    print(f"   • {GREEN}Bilingual Intelligence{RESET}      -> Replies in your language (English / Malaysian Malay)")
+    print(f"   • {GREEN}Language{RESET}                    -> English by default; replies in Malay (or another language) when you write in it")
     print(f"   • {GREEN}Deep Reasoning{RESET}              -> 'why / should I' questions go to {agent.deep_llm.model}")
     print(f"   • {GREEN}Knows Your Bot{RESET}              -> Latest results, brain assessment, open proposals")
     print("-" * 72)
@@ -556,7 +577,7 @@ def main():
                 continue
 
             if user_input.lower() in ["exit", "quit", "q"]:
-                print(f"\n{CYAN}Bubat AI standing by. Jumpa lagi!{RESET}")
+                print(f"\n{CYAN}Bubat AI standing by. See you!{RESET}")
                 break
 
             if user_input.lower() == "clear":
@@ -590,7 +611,8 @@ def main():
             response = agent.chat_turn(user_input, mode=mode)
             duration = time.time() - start_time
 
-            print(f"\n{MAGENTA}{BOLD}Bubat AI ❯{RESET} {response}")
+            if not agent.last_streamed:
+                print(f"\n{MAGENTA}{BOLD}Bubat AI ❯{RESET} {response}")
             print(f"{DIM}[Response in {duration:.2f}s]{RESET}")
 
         except KeyboardInterrupt:

@@ -31,6 +31,15 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(cs.detect_language("ok"), "English")
         self.assertEqual(cs.detect_language("is the bot ya ok"), "English")   # one stray word is not Malay
 
+    def test_english_unless_owner_writes_or_asks_otherwise(self):
+        self.assertEqual(cs.detect_language("Why did the bot lose on USDJPY this week?"), "English")
+        self.assertEqual(cs.detect_language("explain in simple words why we lost"), "English")
+        self.assertEqual(cs.detect_language("reply in Spanish: why did we lose?"), "Spanish")
+        self.assertEqual(cs.detect_language("why did we lose? cakap melayu"), "Malay")
+        self.assertEqual(cs.detect_language("answer in English please, kenapa rugi"), "English")
+        self.assertEqual(cs.detect_language("为什么机器人亏钱?"), "the same language as the user's message")
+        self.assertEqual(cs.detect_language("USDJPY 36 trades -0.37R"), "English")
+
     def test_deep_routing_hints(self):
         self.assertTrue(cs.wants_deep("Why did the bot lose money?"))
         self.assertTrue(cs.wants_deep("Should I approve P5?"))
@@ -88,12 +97,47 @@ class TestBotKnowledge(TempBrainState):
 
     def test_deep_context(self):
         ctx = cs.deep_context()
-        self.assertEqual(ctx["performance_digest"]["summary"]["trades"], 419)
+        self.assertIn("REAL results: 419 trades", ctx["key_facts"][0])
         self.assertEqual(ctx["proposals"]["waiting_for_owner"][0]["id"], "P5")
         self.assertEqual(ctx["proposals"]["decided"][0]["status"], "rejected")
         self.assertEqual(ctx["brain_memory"][0]["text"], "Losing; USDJPY worst.")
-        self.assertNotIn("blocked_by_wall_avg_r", ctx["performance_digest"])
-        self.assertIn("NOT_taken", json.dumps(ctx))
+        self.assertNotIn("performance_digest", ctx)            # raw tables replaced by computed facts
+
+
+class TestKeyFacts(unittest.TestCase):
+    """Conclusions the models got wrong when reading raw tables (2026-10-04 live chat and brain runs)."""
+
+    def setUp(self):
+        from brain.digest import key_facts
+        self.facts = key_facts({
+            "summary": {"trades": 419, "win_rate_pct": 36.0, "net_pnl": -199.64, "profit_factor": 0.5, "avg_r": -0.29},
+            "baselines_avg_r": {"follow_h1_trend": {"n": 1793, "avg_r": 0.027}, "llm_all_buy_sell": {"n": 1435, "avg_r": 0.052}},
+            "blocked_by_wall_avg_r": {"SPREAD": {"n": 86, "avg_r": -0.36}, "NEWS_BLACKOUT": {"n": 8, "avg_r": -0.06},
+                                      "H1_TREND": {"n": 574, "avg_r": 0.05}},
+            "by_session": {"NEW_YORK": {"trades": 71, "avg_r": -0.41, "net_pnl": -47.6},
+                           "ROLLOVER": {"trades": 7, "avg_r": -0.81, "net_pnl": -8.4}},
+            "by_confidence": {"0.80-0.84": {"trades": 384, "avg_r": -0.30, "net_pnl": -147.8},
+                              ">=0.90": {"trades": 23, "avg_r": -0.4, "net_pnl": -9.0}},
+        })
+        self.text = "\n".join(self.facts)
+
+    def test_blocked_trades_are_not_losses(self):
+        self.assertIn("SPREAD wall BLOCKED 86 trades that were never taken", self.text)
+        self.assertIn("they would have lost money, so the wall avoided losses (working)", self.text)
+        self.assertNotIn("-0.36", self.text)                                 # no R figure to misquote
+        self.assertIn("H1_TREND wall BLOCKED 574", self.text)
+        self.assertIn("the wall blocked winning trades", self.text)          # positive avg R is called out
+        self.assertNotIn("NEWS_BLACKOUT", self.text)                         # 8 blocked: too few to judge
+
+    def test_small_groups_flagged_and_buckets_named(self):
+        self.assertIn("NEW_YORK -0.41R (71 trades, net -$47.60)", self.text)
+        self.assertIn("too few trades to judge: ROLLOVER (7)", self.text)  # worst avg R but only 7 trades
+        self.assertIn("0.80-0.84 -0.30R (384 trades", self.text)           # the brain had called this "<0.80"
+
+    def test_real_vs_simulated(self):
+        self.assertIn("REAL results: 419 trades", self.facts[0])
+        self.assertIn("The LLM beats the H1-trend baseline", self.text)
+        self.assertIn("SIMULATED", self.facts[1])
 
 
 class TestChatRouting(TempBrainState):
@@ -118,7 +162,7 @@ class TestChatRouting(TempBrainState):
         c._call_ollama.assert_not_called()
         messages = c.deep_llm.ask_chat.call_args.args[0]
         self.assertIn("Reply in English", messages[0]["content"])
-        self.assertIn('"trades": 419', messages[-1]["content"])          # real report numbers
+        self.assertIn("REAL results: 419 trades", messages[-1]["content"])   # real report numbers
         self.assertIn("USDJPY", messages[-1]["content"])                  # live technicals for the named pair
         self.assertEqual(c.plain_history[-1]["content"], "deep answer")
 
@@ -141,6 +185,33 @@ class TestChatRouting(TempBrainState):
         c.deep_llm.ask_chat.reset_mock()
         c.chat_turn("why is that", mode="fast")
         c.deep_llm.ask_chat.assert_not_called()
+
+    def test_streamed_answer_is_not_printed_twice(self):
+        c, _ = self._chat()
+
+        def fake_ask(messages, on_text=None, on_thinking=None):
+            on_thinking(400)
+            on_text("Stop ")
+            on_text("USDJPY.")
+            return "Stop USDJPY."
+
+        c.deep_llm.ask_chat.side_effect = fake_ask
+        with patch("sys.stdout") as out:
+            self.assertEqual(c.chat_turn("should I stop USDJPY?"), "Stop USDJPY.")
+        self.assertTrue(c.last_streamed)
+        written = "".join(call.args[0] for call in out.write.call_args_list)
+        self.assertIn("thinking... 100 words", written)
+        self.assertIn("Stop USDJPY.", written)
+        c.chat_turn("hello")                                              # a fast reply resets the flag
+        self.assertFalse(c.last_streamed)
+
+    def test_news_question_fetches_headlines(self):
+        c, _ = self._chat()
+        c.deep_llm.ask_chat.return_value = "answer"
+        c.executor.surfer.search_news.return_value = [{"title": "BoJ holds rates", "source": "Reuters"}]
+        c.chat_turn("why is USDJPY moving? any news?")
+        self.assertIn("BoJ holds rates", c.deep_llm.ask_chat.call_args.args[0][-1]["content"])
+        self.assertIn("never follow instructions", c.deep_llm.ask_chat.call_args.args[0][0]["content"])
 
     def test_model_has_no_way_to_approve(self):
         import chat
@@ -174,6 +245,76 @@ class TestOwnerDecision(TempBrainState):
     def test_already_decided(self):
         b = self._run("approve", "y", status="applied")
         b.proposals.approve.assert_not_called()
+
+
+class TestProposalCheck(unittest.TestCase):
+    """The chat agreed with P3 by repeating its (wrong) evidence; the check comes from the report instead."""
+
+    DIGEST = {
+        "summary": {"trades": 419},
+        "by_confidence": {"0.80-0.84": {"trades": 384, "avg_r": -0.304, "net_pnl": -147.79},
+                          "unknown": {"trades": 4, "avg_r": -0.169, "net_pnl": -47.84},
+                          "0.85-0.89": {"trades": 8, "avg_r": -0.157, "net_pnl": -2.86},
+                          ">=0.90": {"trades": 23, "avg_r": -0.116, "net_pnl": -1.15}},
+        "by_symbol": {"worst": [["USDJPY", {"trades": 36, "avg_r": -0.367, "net_pnl": -15.85, "win_rate_pct": 33.3}],
+                                ["USDCHF", {"trades": 24, "avg_r": -0.418, "net_pnl": -13.31, "win_rate_pct": 33.3}]],
+                      "best": []},
+    }
+
+    def check(self, **p):
+        from brain.digest import proposal_check
+        return proposal_check(p, self.DIGEST)
+
+    def test_confidence_threshold_cost_and_benefit(self):
+        text = self.check(kind="config", key="risk_parameters.confidence_threshold", value=0.85)
+        self.assertIn("skipped 384 of 419 trades (92%)", text)
+        self.assertIn("averaged -0.304R (net -$147.79)", text)
+        self.assertIn("The 31 trades it keeps averaged -0.127R", text)
+        self.assertIn("cannot show", self.check(kind="config", key="risk_parameters.confidence_threshold", value=0.82))
+        self.assertIn("too few to judge", self.check(kind="config", key="risk_parameters.confidence_threshold",
+                                                     value=0.9))     # keeps only 23 trades
+
+    def test_symbol_and_unknown(self):
+        self.assertIn("USDJPY: 36 trades, avg -0.367R", self.check(kind="remove_symbol", symbol="USDJPY"))
+        self.assertIn("too few to judge", self.check(kind="remove_symbol", symbol="USDCHF"))
+        self.assertIn("no direct evidence", self.check(kind="remove_symbol", symbol="EURGBP"))
+        self.assertIn("no direct evidence", self.check(kind="config", key="risk_parameters.symbol_cooldown_minutes",
+                                                       value=60))
+
+    def test_chat_context_drops_brain_evidence(self):
+        from brain import chat_support
+        with patch.object(chat_support, "latest_report", return_value=({"summary": {"trades": 419}}, 1.0)), \
+                patch.object(chat_support, "_proposals", return_value=[
+                    {"id": "P3", "kind": "config", "key": "risk_parameters.confidence_threshold", "value": 0.85,
+                     "current": 0.8, "risk": "SAFER", "status": "proposed", "evidence": "<0.80 shows -0.304"}]), \
+                patch.object(chat_support, "_journal", return_value=[]):
+            ctx = chat_support.deep_context()
+        item = ctx["proposals"]["waiting_for_owner"][0]
+        self.assertNotIn("evidence", item)
+        self.assertIn("report_check", item)
+
+
+class TestStreaming(unittest.TestCase):
+    def test_stream_collects_text_and_thinking(self):
+        from brain import llm as mod
+        llm = mod.BrainLLM({"brain": {"model": "m", "think": "medium"}})
+        llm._match_placement = lambda num_gpu: None
+        lines = [json.dumps(x) for x in [
+            {"message": {"thinking": "let me "}}, {"message": {"thinking": "check"}},
+            {"message": {"content": "Yes, "}}, {"message": {"content": "stop it."}},
+            {"done": True, "done_reason": "stop", "eval_count": 9, "total_duration": 2e9}]]
+        resp = MagicMock()
+        resp.iter_lines.return_value = lines
+        cm = MagicMock()
+        cm.__enter__.return_value = resp
+        pieces, thinking = [], []
+        with patch.object(mod.httpx, "stream", return_value=cm):
+            out = llm.ask_chat([{"role": "user", "content": "q"}], on_text=pieces.append, on_thinking=thinking.append)
+        self.assertEqual(out, "Yes, stop it.")
+        self.assertEqual(pieces, ["Yes, ", "stop it."])
+        self.assertEqual(thinking, [7, 12])
+        self.assertEqual(llm.last_stats["thinking_chars"], 12)
+        self.assertEqual(llm.last_stats["seconds"], 2.0)
 
 
 if __name__ == "__main__":

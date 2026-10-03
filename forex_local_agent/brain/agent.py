@@ -17,7 +17,7 @@ AGENT_DIR = Path(__file__).resolve().parent.parent
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
-from brain.digest import build_digest, headline
+from brain.digest import build_digest, headline, key_facts, proposal_check
 from brain.journal import Journal
 from brain.llm import BrainLLM
 from brain.proposals import ProposalStore, SESSION_TUNABLES, SESSIONS, TUNABLES
@@ -52,6 +52,8 @@ Proposal kinds you may use:
 - "idea": a code or strategy change only the owner can implement (give "text").
 
 Principles:
+- "key_facts_computed_by_code" are conclusions code drew from the full report (sample sizes, what the
+  walls blocked, which groups are big enough). Trust them over your own reading of the raw tables.
 - Use only the numbers you are given. Every non-idea proposal needs "evidence" quoting them.
 - Fewer than 30 trades in a group is noise: do not act on it.
 - Prefer changes that reduce risk. Propose at most a few; zero is a fine answer.
@@ -212,12 +214,14 @@ class Brain:
                 return None
 
         props = {
-            "open": [_brief(p) for p in items if p["status"] == "proposed"],
+            # report_check: what today's report says about each open proposal, computed in code
+            "open": [{**_brief(p), "report_check": proposal_check(p, digest)} for p in items if p["status"] == "proposed"],
             "applied": [{**_brief(p), "before": p.get("before"), "days_since_applied": days_since(p.get("applied"))}
                         for p in items if p["status"] == "applied"][-6:],
             "rejected_or_rolled_back": [_brief(p) for p in items if p["status"] in ("rejected", "rolled_back")][-6:],
         }
-        return json.dumps({"today": digest, "your_memory": memory[-8:], "proposals": props},
+        return json.dumps({"key_facts_computed_by_code": key_facts(digest), "today": digest,
+                           "your_memory": memory[-8:], "proposals": props},
                           ensure_ascii=False, default=str)
 
     # ── Owner-facing summary ─────────────────────────────────────────────
