@@ -706,6 +706,15 @@ class ForexAgent:
                     except Exception as e:
                         logger.warning(f"Asia shadow strategy error: {e}")
 
+                    # 2c. Once per UTC day: grade each session from its recent results
+                    try:
+                        review = self.mt5_engine.session_manager.maybe_review(self.mt5_engine.check_closed_trades)
+                        if review:
+                            self.supabase.log_telemetry("ForexAgent", "SESSION_REVIEW", review, status="SUCCESS")
+                        self.cycle_stats["session_levels"] = dict(self.mt5_engine.session_manager.levels)
+                    except Exception as e:
+                        logger.warning(f"Session review error: {e}")
+
                     # Cycle telemetry (trailing counts cover the previous sleep window)
                     self.cycle_stats["cycle_seconds"] = round(time.time() - cycle_started, 1)
                     self.cycle_stats["symbols"] = len(cycle_results)

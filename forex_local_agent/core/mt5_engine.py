@@ -28,8 +28,10 @@ except ImportError:
 
 try:
     from core.trade_analytics import classify_exit, spread_to_sl_ratio, entry_window_open
+    from core.session_profiles import SessionManager
 except ImportError:
     from forex_local_agent.core.trade_analytics import classify_exit, spread_to_sl_ratio, entry_window_open
+    from forex_local_agent.core.session_profiles import SessionManager
 
 try:
     from core.mt5_time import history_deals_utc, server_epoch_to_utc, get_server_utc_offset_seconds
@@ -91,6 +93,8 @@ class MT5Engine:
         self.max_spread_sl_ratio = risk.get("max_spread_sl_ratio")
         self.max_confidence = risk.get("max_confidence")
         self.entry_hours_utc = risk.get("entry_hours_utc")
+        # Per-session execution profiles + daily grading (core/session_profiles.py)
+        self.session_manager = SessionManager(self.config)
         self.min_account_balance_gold = 300.0
 
         # Trading settings
@@ -553,6 +557,18 @@ class MT5Engine:
                    f"(max {self.max_spread_sl_ratio:.0%})")
             logger.warning(msg)
             return {"status": "rejected", "message": msg}
+
+        # Session Profile Wall: per-session symbols, slots, spread cap and loss budget
+        try:
+            offset = get_server_utc_offset_seconds()
+            entry_hours = [server_epoch_to_utc(p["time"], offset).hour for p in open_positions if p.get("time")]
+            session_msg = self.session_manager.check(symbol, ratio, entry_hours, balance, self.check_closed_trades)
+        except Exception as e:
+            logger.warning(f"Session profile check failed for {symbol}: {e}")
+            session_msg = f"REJECTED: Session profile check unavailable for {symbol} ({type(e).__name__})"
+        if session_msg:
+            logger.warning(session_msg)
+            return {"status": "rejected", "message": session_msg}
 
         live_price = float(tick.ask if action == "BUY" else tick.bid)
 

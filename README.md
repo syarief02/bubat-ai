@@ -209,13 +209,16 @@ Before any order is dispatched to MetaTrader 5, it must pass through **9 determi
 | 7 | **Margin Gatekeeper** | Rejects if free margin is negative or insufficient |
 | 8 | **Spread Protection Wall** | Rejects if live spread exceeds `max_spread_pips` (3.5 pips) |
 | 9 | **Gold Balance Guard** | Forbids `XAUUSD` on accounts under **\$300 USD** |
-| 10 | **Entry Window Wall** | New trades only inside `entry_hours_utc` (default **07:00-13:00 UTC**: London + first overlap hour) |
+| 10 | **Entry Window Wall** | Optional: new trades only inside `entry_hours_utc` (`null` = all sessions trade, the current setting) |
 | 11 | **Confidence Calibration Cap** | Rejects LLM confidence above `max_confidence` (0.89); the highest buckets have been anti-predictive |
 | 12 | **Spread Cost Wall** | Rejects if live spread exceeds `max_spread_sl_ratio` (6%) of the SL distance |
+| 13 | **Session Profile Wall** | Per-session symbols, open-trade slots, spread cap and **daily loss budget** (`session_profiles`); budgets sum to `daily_loss_limit_pct`, so one bad session cannot lock out the others |
 
 > **Note:** These walls are deterministic Python code — the LLM cannot override, bypass, or modify them.
 
-> **Session strategies:** the LLM trend strategy trades only inside `entry_hours_utc` (London). Asian hours (00:00-06:00 UTC) run a separate deterministic **range-fade** strategy on 5 low-spread majors (`session_strategies.asia_range_fade`): fade M5 Bollinger(20, 2.0) extremes confirmed by RSI(14) < 30 / > 70, SL = max(1.5 x ATR, 8 pips), TP = 1R, force-exit at 07:00 UTC. A 180-day backtest showed about +0.05R/trade before costs but roughly break-even after a realistic 0.3-1.0 pip cost, so it runs in **shadow mode**: paper trades at the live bid/ask, resolved on M5 bars, logged to `state/asia_shadow_trades.jsonl`, and **no orders are sent**. Going live needs the owner's approval after 100+ paper trades averaging at least +0.05R (`execution_quality.py` reports progress).
+> **Per-session execution:** every session trades, each with its own profile (`core/session_profiles.py`). Once per UTC day each session is graded from its last 5 days of trades (R = pips / SL pips, by entry hour): `NORMAL` (owner baseline), `REDUCED` (half the slots, USD majors only, spread <= 4% of SL) when n >= 20 and avg R < -0.15, `MINIMAL` (1 slot, USD majors, spread <= 3%) when avg R < -0.30; it steps back up one level per day after n >= 10 trades at avg R >= 0, and never above the baseline. Levels persist in `state/session_levels.json`; each review is logged as `SESSION_REVIEW`.
+
+> **Asia shadow strategy:** in addition, Asian hours (00:00-06:00 UTC) run a separate deterministic **range-fade** strategy on 5 low-spread majors (`session_strategies.asia_range_fade`): fade M5 Bollinger(20, 2.0) extremes confirmed by RSI(14) < 30 / > 70, SL = max(1.5 x ATR, 8 pips), TP = 1R, force-exit at 07:00 UTC. A 180-day backtest showed about +0.05R/trade before costs but roughly break-even after a realistic 0.3-1.0 pip cost, so it runs in **shadow mode**: paper trades at the live bid/ask, resolved on M5 bars, logged to `state/asia_shadow_trades.jsonl`, and **no orders are sent**. Going live needs the owner's approval after 100+ paper trades averaging at least +0.05R (`execution_quality.py` reports progress).
 
 > **Ranked execution:** each cycle first analyses every symbol, then executes the tradeable signals best-first (full H1 trend before bias-only, then lowest spread/SL) so the limited open-trade slots go to the best setups instead of whichever symbol comes first in the config (`rank_signals`).
 
@@ -414,6 +417,7 @@ The whole mock cycle runs with `mt5.order_send` patched, so no test can open, cl
 ```powershell
 python forex_local_agent/tests/test_cycle5_regressions.py   # rules loader, reflexion quarantine, MT5 server time, daily loss, tier-1 blackout, trailing config, chatbot
 python forex_local_agent/tests/test_execution_upgrade.py    # ranked execution, entry window, confidence cap, spread cost wall, no-lookahead simulation
+python forex_local_agent/tests/test_session_profiles.py     # per-session slots, spread cap, loss budget, daily grading
 python forex_local_agent/tests/test_session_strategies.py   # Asia range-fade signal, paper trade fill/resolve, shadow runner never sends orders
 python forex_local_agent/tests/test_daily_loss_stop.py
 python forex_local_agent/tests/test_chat_logger.py
@@ -549,7 +553,7 @@ Located at `forex_local_agent/config.json`:
     "max_currency_exposure": 3,
     "max_spread_sl_ratio": 0.06,
     "max_confidence": 0.89,
-    "entry_hours_utc": [7, 13],
+    "entry_hours_utc": null,
     "rank_signals": true,
     "daily_loss_limit_pct": 5.0
   },
@@ -589,9 +593,11 @@ Located at `forex_local_agent/config.json`:
 | `trailing_distance_pips` | `10.0` | Distance of the trailing SL behind price |
 | `trailing_step_pips` | `2.0` | Minimum SL improvement before a trailing modification is sent |
 | `max_currency_exposure` | `3` | Max positions containing any single currency |
+| `session_profiles.<SESSION>` | see config | `max_open_trades`, `loss_budget_pct`, `max_spread_sl_ratio`, `symbols` per session (ASIA, LONDON, LONDON_NY_OVERLAP, NEW_YORK, ROLLOVER) |
+| `session_profiles.grading` | see config | Daily grading thresholds (review window, R thresholds, minimum trades) |
 | `max_spread_sl_ratio` | `0.06` | Spread Cost Wall: max live spread as a fraction of the SL distance |
 | `max_confidence` | `0.89` | Confidence Calibration Cap: LLM confidence above this is rejected |
-| `entry_hours_utc` | `[7, 13]` | Entry Window Wall: new trades only in `[start, end)` UTC hours; `null` disables |
+| `entry_hours_utc` | `null` | Entry Window Wall: new trades only in `[start, end)` UTC hours; `null` = all sessions |
 | `rank_signals` | `true` | Rank each cycle's signals before execution instead of config order |
 | `daily_loss_limit_pct` | `5.0` | Max cumulative realized loss (% of balance) before halting all new entries for the UTC day |
 

@@ -31,8 +31,18 @@
     "max_currency_exposure": 3,
     "max_spread_sl_ratio": 0.06,
     "max_confidence": 0.89,
-    "entry_hours_utc": [7, 13],
+    "entry_hours_utc": null,
     "rank_signals": true
+  },
+  "session_profiles": {
+    "enabled": true,
+    "ASIA": {"max_open_trades": 4, "loss_budget_pct": 1.0, "max_spread_sl_ratio": 0.04, "symbols": null},
+    "LONDON": {"max_open_trades": 10, "loss_budget_pct": 1.75, "max_spread_sl_ratio": 0.06, "symbols": null},
+    "LONDON_NY_OVERLAP": {"max_open_trades": 8, "loss_budget_pct": 1.0, "max_spread_sl_ratio": 0.06, "symbols": null},
+    "NEW_YORK": {"max_open_trades": 6, "loss_budget_pct": 1.0, "max_spread_sl_ratio": 0.05, "symbols": null},
+    "ROLLOVER": {"max_open_trades": 2, "loss_budget_pct": 0.25, "max_spread_sl_ratio": 0.03, "symbols": null},
+    "grading": {"review_days": 5, "reduce_below_r": -0.15, "minimal_below_r": -0.30,
+                "min_trades_down": 20, "min_trades_up": 10, "restore_at_or_above_r": 0.0}
   },
   "session_strategies": {
     "asia_range_fade": {

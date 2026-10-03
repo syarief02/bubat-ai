@@ -158,7 +158,8 @@ def rank_signals(candidates: List[Dict]) -> List[Dict]:
 
 
 _WALLS = (
-    ("entry window", "SESSION_WINDOW"), ("calibration cap", "CONFIDENCE_CAP"), ("spread cost", "SPREAD_COST"),
+    ("session profile", "SESSION_SYMBOLS"), ("session slot cap", "SESSION_SLOTS"),
+    ("session loss budget", "SESSION_BUDGET"), ("entry window", "SESSION_WINDOW"), ("calibration cap", "CONFIDENCE_CAP"), ("spread cost", "SPREAD_COST"),
     ("counter-trend", "H1_TREND"), ("daily loss", "DAILY_LOSS_STOP"), ("max open trades", "CAPACITY"),
     ("already open", "DUPLICATE"), ("news blackout", "NEWS_BLACKOUT"), ("currency concentration", "CORRELATION"),
     ("margin", "MARGIN"), ("spread", "SPREAD"), ("xauusd", "GOLD_BALANCE"), ("risk at sl", "RISK_CAP"),
