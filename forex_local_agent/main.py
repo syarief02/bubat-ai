@@ -35,6 +35,7 @@ from maintenance.model_updater import ModelUpdater
 from core.supabase_manager import SupabaseManager
 from learning.reflexion_store import ReflexionStore, validate_reflexion_rule
 from core.trade_analytics import wall_from_message, rank_signals
+from core.session_strategies import AsiaRangeFadeShadow
 
 # ── Logging Configuration ────────────────────────────────────────────────────
 logger.remove()
@@ -82,6 +83,8 @@ class ForexAgent:
         self.max_open_trades = self.config.get("risk_parameters", {}).get("max_open_trades", 10)
         # Rank each cycle's tradeable signals before execution instead of first-come config order
         self.rank_signals = self.config.get("risk_parameters", {}).get("rank_signals", True)
+        # Session-specific strategies outside the LLM entry window (paper only; never sends orders)
+        self.asia_shadow = AsiaRangeFadeShadow(self.config)
 
         # Symbol cooldown management to prevent revenge-trading
         self.symbol_cooldowns: dict[str, datetime] = {}
@@ -696,6 +699,12 @@ class ForexAgent:
 
                     # 2. Check for recently closed trades and learn from losses FIRST
                     await self.check_closed_trades()
+
+                    # 2b. Asia range-fade strategy (shadow/paper trades only)
+                    try:
+                        self.cycle_stats["asia_shadow"] = self.asia_shadow.run_cycle()
+                    except Exception as e:
+                        logger.warning(f"Asia shadow strategy error: {e}")
 
                     # Cycle telemetry (trailing counts cover the previous sleep window)
                     self.cycle_stats["cycle_seconds"] = round(time.time() - cycle_started, 1)

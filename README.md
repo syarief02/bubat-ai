@@ -215,6 +215,8 @@ Before any order is dispatched to MetaTrader 5, it must pass through **9 determi
 
 > **Note:** These walls are deterministic Python code — the LLM cannot override, bypass, or modify them.
 
+> **Session strategies:** the LLM trend strategy trades only inside `entry_hours_utc` (London). Asian hours (00:00-06:00 UTC) run a separate deterministic **range-fade** strategy on 5 low-spread majors (`session_strategies.asia_range_fade`): fade M5 Bollinger(20, 2.0) extremes confirmed by RSI(14) < 30 / > 70, SL = max(1.5 x ATR, 8 pips), TP = 1R, force-exit at 07:00 UTC. A 180-day backtest showed about +0.05R/trade before costs but roughly break-even after a realistic 0.3-1.0 pip cost, so it runs in **shadow mode**: paper trades at the live bid/ask, resolved on M5 bars, logged to `state/asia_shadow_trades.jsonl`, and **no orders are sent**. Going live needs the owner's approval after 100+ paper trades averaging at least +0.05R (`execution_quality.py` reports progress).
+
 > **Ranked execution:** each cycle first analyses every symbol, then executes the tradeable signals best-first (full H1 trend before bias-only, then lowest spread/SL) so the limited open-trade slots go to the best setups instead of whichever symbol comes first in the config (`rank_signals`).
 
 > **Broker server time:** MT5 stamps deals, ticks and bars in broker server time (Tickmill: UTC+2/UTC+3). Every history query goes through `core/mt5_time.py`, which measures the offset from live ticks during market hours and persists it in `state/`. Querying MT5 with plain UTC datetimes silently misses the most recent hours of deals.
@@ -412,6 +414,7 @@ The whole mock cycle runs with `mt5.order_send` patched, so no test can open, cl
 ```powershell
 python forex_local_agent/tests/test_cycle5_regressions.py   # rules loader, reflexion quarantine, MT5 server time, daily loss, tier-1 blackout, trailing config, chatbot
 python forex_local_agent/tests/test_execution_upgrade.py    # ranked execution, entry window, confidence cap, spread cost wall, no-lookahead simulation
+python forex_local_agent/tests/test_session_strategies.py   # Asia range-fade signal, paper trade fill/resolve, shadow runner never sends orders
 python forex_local_agent/tests/test_daily_loss_stop.py
 python forex_local_agent/tests/test_chat_logger.py
 ```

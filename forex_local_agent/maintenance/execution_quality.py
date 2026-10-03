@@ -8,6 +8,7 @@ Measures where R is lost between the signal and the realised trade:
 - trade management: actual R vs the same trade unmanaged
 - spread cost: actual R by spread / SL-distance bucket
 - quick re-entries: same symbol re-opened within 30 min of a close
+- Asia range-fade shadow (paper) record vs its promotion bar
 
 Read-only (history + bars). Usage:
     python maintenance/execution_quality.py --hours 24
@@ -28,6 +29,7 @@ sys.path.insert(0, str(AGENT_DIR))
 import MetaTrader5 as mt5  # noqa: E402
 
 from core.mt5_time import get_server_utc_offset_seconds  # noqa: E402
+from core.session_strategies import AsiaRangeFadeShadow, summarize_shadow  # noqa: E402
 from core.trade_analytics import quick_reentries  # noqa: E402
 from maintenance.daily_report import BarCache, collect_trades, simulate_signals  # noqa: E402
 
@@ -63,6 +65,8 @@ def build_report(hours: float) -> Dict:
             spread_rows[f"{lo:.2f}-{hi:.2f}"] = _stats([t["r"] for t in g])
 
         reentries = quick_reentries(trades)
+        asia = AsiaRangeFadeShadow(json.loads((AGENT_DIR / "config.json").read_text(encoding="utf-8")))
+        asia_results = asia.load_results()
         return {
             "generated_at": end_utc.isoformat(),
             "window_start": start_utc.isoformat(),
@@ -81,6 +85,10 @@ def build_report(hours: float) -> Dict:
             "spread_to_sl": spread_rows,
             "quick_reentries_30m": {**_stats([t["r"] for t in reentries]),
                                     "share_pct": round(100 * len(reentries) / len(trades), 1) if trades else 0.0},
+            "asia_shadow_all_time": {**summarize_shadow(asia_results, asia.cfg),
+                                     "open_paper_trades": len(asia.open_trades),
+                                     "promotion_bar": {"trades": asia.cfg["promote_after_trades"],
+                                                       "min_avg_r": asia.cfg["promote_min_avg_r"]}},
         }
     finally:
         mt5.shutdown()
