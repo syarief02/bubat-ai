@@ -1,6 +1,6 @@
-# 🤖 Bubat AI — Local Autonomous Institutional Forex AI Agent
+# 🤖 Bubat AI — Local Autonomous Forex AI Agent
 
-> **A 100% local, self-hosted, private, and self-evolving institutional-grade Forex trading system featuring strict architectural separation between Qualitative LLM Reasoning and Quantitative Deterministic Python Math Execution.**
+> **A self-hosted, private forex trading agent for MetaTrader 5. A local LLM decides *direction* only (BUY / SELL / WAIT); every price, lot size, stop and risk check is deterministic Python. Each trading session runs under its own execution profile, re-graded daily from its own results.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
 [![MetaTrader 5](https://img.shields.io/badge/MetaTrader_5-API-green)](https://www.metatrader5.com)
@@ -9,640 +9,512 @@
 
 ---
 
-## 📌 Table of Contents
-1. [Executive Architecture & Philosophy](#-executive-architecture--philosophy)
-2. [Supported Instruments (All 28 Pairs + Gold)](#-supported-instruments-all-28-pairs--gold)
-3. [Project Directory & File Structure](#-project-directory--file-structure)
-4. [Subsystem Deep Dive](#-subsystem-deep-dive)
-   - [1. Deterministic Math & Execution Engine (`core/mt5_engine.py`)](#1-deterministic-math--execution-engine-coremt5_enginepy)
-   - [2. Institutional Risk Walls & Defense-in-Depth](#2-institutional-risk-walls--defense-in-depth)
-   - [3. Economic Calendar & News Blackout Filter](#3-economic-calendar--news-blackout-filter-learningskills)
-   - [4. Currency Correlation & Portfolio Exposure Filter](#4-currency-correlation--portfolio-exposure-filter-learningskills)
-   - [5. Resilient Qualitative LLM Reasoner (`core/agent_logic.py`)](#5-resilient-qualitative-llm-reasoner-coreagent_logicpy)
-   - [6. Live WebSurfer Financial Pipeline](#6-live-websurfer-financial-pipeline)
-   - [7. Active Trailing Stop & Break-Even Manager](#7-active-trailing-stop--break-even-manager)
-   - [8. Multi-Pair Market Scanner (`core/market_scanner.py`)](#8-multi-pair-market-scanner-coremarket_scannerpy)
-   - [9. Continuous Learning & Reflexion Engine (`learning/`)](#9-continuous-learning--reflexion-engine-learning)
-   - [10. Supabase Cloud Database Telemetry (`core/supabase_manager.py`)](#10-supabase-cloud-database-telemetry-coresupabase_managerpy)
-   - [11. Human-In-The-Loop WhatsApp Gateway (`core/openclaw_bridge.py`)](#11-human-in-the-loop-whatsapp-gateway-coreopenclaw_bridgepy)
-5. [Self-Evolving Code Architecture](#-self-evolving-code-architecture)
-6. [Autonomous System & Coding Agent (`local_assistant.py`)](#-autonomous-system--coding-agent-local_assistantpy)
-7. [Automated Regression Test Suite (`tests/test_mock_cycle.py`)](#-automated-regression-test-suite-teststest_mock_cyclepy)
-8. [System Requirements & Hardware Setup](#-system-requirements--hardware-setup)
-9. [Installation & Quick Start Guide](#-installation--quick-start-guide)
-10. [Configuration Guide (`config.json`)](#-configuration-guide-configjson)
-11. [1-Click Desktop Batch Runners](#-1-click-desktop-batch-runners)
-12. [Troubleshooting & Best Practices](#-troubleshooting--best-practices)
-13. [License & Disclaimer](#-license--disclaimer)
+## 📊 Project Status
+
+**This is an active research project, not a proven profitable system.** Live results over 416 trades (2026-09-28 to 2026-10-02) averaged **−0.29R per trade** (win rate 36%, profit factor 0.49). The daily post-mortem cycle (see [Daily Post-Mortem & Self-Improvement Loop](#-daily-post-mortem--self-improvement-loop)) found where the R was lost: spread cost on wide-spread crosses, trade management, and weak sessions. The current version adds per-session execution profiles, a spread-cost wall, ranked execution and daily session grading in response. **Run it on a demo account.**
 
 ---
 
-## 🏛️ Executive Architecture & Philosophy
+## 📌 Table of Contents
+1. [Architecture & Philosophy](#-architecture--philosophy)
+2. [One Trading Cycle, Step by Step](#-one-trading-cycle-step-by-step)
+3. [Supported Instruments](#-supported-instruments-28-pairs--gold)
+4. [Per-Session Execution](#-per-session-execution)
+5. [Deterministic Risk Walls](#-deterministic-risk-walls-14-layers)
+6. [Subsystem Deep Dive](#-subsystem-deep-dive)
+7. [Daily Post-Mortem & Self-Improvement Loop](#-daily-post-mortem--self-improvement-loop)
+8. [Project Structure](#-project-structure)
+9. [System Requirements](#-system-requirements)
+10. [Installation & Quick Start](#-installation--quick-start)
+11. [Configuration Reference (`config.json`)](#-configuration-reference-configjson)
+12. [Testing](#-testing)
+13. [1-Click Batch Runners](#-1-click-batch-runners)
+14. [Troubleshooting](#-troubleshooting)
+15. [License & Disclaimer](#-license--disclaimer)
 
-Modern Large Language Models (LLMs) excel at qualitative reasoning, macroeconomic narrative analysis, and synthesizing cross-asset news headlines. However, **LLMs hallucinate floating-point arithmetic** and cannot be trusted to compute live pip distances, Stop Loss prices, or dynamic lot sizing.
+---
 
-Bubat AI solves this fundamental limitation with a **strict two-tier separation of concerns**:
+## 🏛️ Architecture & Philosophy
+
+LLMs are useful for qualitative judgement: reading a technical picture, weighing news headlines, summarizing a market narrative. They are **not** reliable at arithmetic, so Bubat AI never lets the model produce a number that touches the broker.
 
 ```mermaid
 flowchart TD
-    subgraph Senses ["1. Senses & Intelligence Layer"]
-        A1["MetaTrader 5 M5/H1 Candles"] --> B1["Multi-Pair Scanner"]
-        A2["WebSurfer News & Headlines"] --> B2["Sentiment Engine"]
-        A3["ForexFactory JSON API"] --> B3["Economic Calendar Skill"]
+    subgraph Senses ["1. Market Data & Context"]
+        A1["MT5 M5 bars + H1 trend label"]
+        A2["Live news (SearXNG / RSS WebSurfer)"]
+        A3["ForexFactory economic calendar"]
+        A4["Episodic memory + curated rules"]
     end
 
-    subgraph Reasoning ["2. Qualitative Reasoning Tier (Ollama AI Brain)"]
-        B1 & B2 & B3 --> C1["Prompt Context Builder"]
-        C1 --> C2["Qwen 2.5 Coder (agent-brain:32k)"]
-        C2 --> C3["TradeDecision JSON (BUY / SELL / WAIT)"]
+    subgraph Reasoning ["2. Qualitative Tier (local Ollama LLM)"]
+        A1 & A2 & A3 & A4 --> C1["Prompt builder"]
+        C1 --> C2["agent-brain:32k"]
+        C2 --> C3["TradeDecision JSON: BUY / SELL / WAIT + confidence"]
     end
 
-    subgraph Execution ["3. Quantitative Tier (Deterministic Python Math)"]
-        C3 --> D1["ATR Volatility Geometry Engine"]
-        D1 --> D2["15-Pip SL Floor & 1:2 R:R Target"]
-        D2 --> D3["Account Risk & Margin Sizing"]
+    subgraph Math ["3. Quantitative Tier (deterministic Python)"]
+        C3 --> D1["ATR geometry: SL = max(1.5 ATR, 15 pips), TP = 3 ATR"]
+        D1 --> D2["Lot sizing + broker constraints"]
     end
 
-    subgraph RiskWalls ["4. Deterministic Risk Walls (8 Layers)"]
-        D3 --> E0{"H1 MTF Trend Conflict?"}
-        E0 -- Yes --> R0["REJECT: Counter-Trend"]
-        E0 -- No --> E1{"High-Impact News Blackout?"}
-        E1 -- Yes --> R1["REJECT: News Blackout Active"]
-        E1 -- No --> E4{"Currency Exposure > 3?"}
-        E4 -- Yes --> R4["REJECT: Correlation Risk"]
-        E4 -- No --> E3{"Max Trades / Spread?"}
-        E3 -- Yes --> R3["REJECT: Capacity / Spread"]
-        E3 -- No --> F1["MetaTrader 5 Order Execution"]
+    subgraph Rank ["4. Ranked Execution"]
+        D2 --> R1["Queue every tradeable signal of the cycle"]
+        R1 --> R2["Sort: full H1 trend first, then lowest spread / SL"]
     end
 
-    subgraph Monitoring ["5. Active Trade Management & Memory"]
-        F1 --> G1["Trailing Stop (+10p → BE, +15p Trail)"]
-        F1 --> G2["Supabase Cloud Sync"]
-        F1 --> G3["Reflexion Learner"]
-        F1 --> G4["Circuit Breaker & Error Recovery"]
+    subgraph Walls ["5. 14 Deterministic Risk Walls"]
+        R2 --> W1{"All walls pass? (trend, daily loss, capacity, news, correlation, spread cost, session profile, margin...)"}
+        W1 -- No --> X["REJECTED (logged with reason)"]
+        W1 -- Yes --> F1["MT5 order_send"]
+    end
+
+    subgraph After ["6. Management & Learning"]
+        F1 --> G1["Break-even +15p / trailing from +20p (every 15 s)"]
+        F1 --> G2["Supabase telemetry"]
+        F1 --> G3["Loss reflexion (quarantined candidates)"]
+        F1 --> G4["Daily session grading"]
     end
 ```
 
 ### Key Design Principles
 | Principle | Implementation |
 |---|---|
-| **LLM = Qualitative ONLY** | The LLM determines *direction* (BUY/SELL/WAIT) and sentiment — never prices, lot sizes, or SL/TP levels |
-| **Math = Deterministic Python** | ATR geometry, pip distance, lot sizing, and risk % are all computed by pure Python functions |
-| **Defense-in-Depth** | 8 independent risk walls must ALL pass before any order reaches the broker |
-| **Fail-Safe by Default** | Any parsing failure, connectivity loss, or ambiguous signal defaults to WAIT (no trade) |
-| **Self-Evolution** | Autonomous code patches, learned rules, and circuit breakers continuously improve the system |
+| **LLM = direction only** | The model outputs BUY / SELL / WAIT, sentiment, confidence and reasoning. It never outputs prices, lots or SL/TP |
+| **Math = deterministic Python** | ATR geometry, pip distances, lot sizing and every risk check are plain Python functions |
+| **Defense-in-depth** | 14 independent walls must all pass before an order reaches the broker |
+| **Fail-safe** | Parse failures, connectivity loss or ambiguity default to WAIT. A wall that errors rejects the trade |
+| **Evidence before risk** | New strategies run in shadow (paper) mode first. Anything that adds risk needs the owner's approval |
+| **Broker-time correct** | All MT5 history is queried through `core/mt5_time.py` (MT5 stamps deals in broker server time, not UTC) |
 
 ---
 
-## 🌐 Supported Instruments (All 28 Pairs + Gold)
+## 🔁 One Trading Cycle, Step by Step
 
-The system scans, analyzes, and trades **all 28 major and cross currency pairs plus Gold (`XAUUSD`)** (total 29 instruments) with automatic tick-value conversion to the account's base currency:
+`main.py` runs one cycle at every **M5 candle close**:
 
-| Category | Pairs | Description |
+1. **Analyse every symbol (29).** For each one, `main.py` does the following:
+   - Skips the symbol if it already has an open position or is in its post-trade cooldown.
+   - Pulls M5 technicals and the H1 trend label, live news and similar past episodes.
+   - Asks the LLM for a decision.
+   - For a BUY or SELL at confidence ≥ `confidence_threshold` (0.80), calculates the deterministic trade parameters and **queues** the signal. Nothing is executed during analysis.
+2. **Rank and execute.** Queued signals are sorted best-first (full H1 trend before bias-only, then lowest spread relative to SL), and each goes through the 14 risk walls in that order. This way the limited slots go to the best setups, not to whichever symbol comes first in the config.
+3. **Closed trades.** Each close starts the symbol cooldown from the trade's real close time. Each loss produces a reflexion candidate, which is quarantined and never injected into prompts.
+4. **Asia shadow strategy.** The Asia range-fade strategy opens and resolves paper trades during 00:00–06:00 UTC. It sends no orders.
+5. **Session review.** Once per UTC day, each session is graded from its last 5 days of trades.
+6. **Telemetry.** `CYCLE_SUMMARY` (outcomes, parse health, session levels) goes to `logs/agent.log` and Supabase, and a summary table is printed.
+7. **Wait for the next candle.** While waiting, the break-even / trailing manager checks open positions **every 15 seconds**.
+
+---
+
+## 🌐 Supported Instruments (28 Pairs + Gold)
+
+| Category | Symbols |
+|---|---|
+| **7 USD majors** | `EURUSD`, `GBPUSD`, `USDJPY`, `USDCHF`, `AUDUSD`, `NZDUSD`, `USDCAD` |
+| **6 EUR crosses** | `EURGBP`, `EURJPY`, `EURCHF`, `EURAUD`, `EURNZD`, `EURCAD` |
+| **5 GBP crosses** | `GBPJPY`, `GBPCHF`, `GBPAUD`, `GBPNZD`, `GBPCAD` |
+| **4 AUD crosses** | `AUDJPY`, `AUDCHF`, `AUDNZD`, `AUDCAD` |
+| **3 NZD crosses** | `NZDJPY`, `NZDCHF`, `NZDCAD` |
+| **3 CAD/CHF crosses** | `CADJPY`, `CADCHF`, `CHFJPY` |
+| **Metal** | `XAUUSD` (blocked on accounts under \$300) |
+
+Which symbols a session may trade can be narrowed by its session profile (see below).
+
+---
+
+## 🕒 Per-Session Execution
+
+Every session trades, but each has its **own execution profile and its own daily loss budget**, and is **re-graded once per UTC day** from its own results (`core/session_profiles.py`). A trade belongs to the session in which it was **opened**.
+
+| Session | Hours (UTC) | Slots | Loss budget | Spread cap (of SL) |
+|---|---|---|---|---|
+| `ASIA` | 22:00–07:00 | 4 | 1.0% | 4% |
+| `LONDON` | 07:00–12:00 | 10 | 1.75% | 6% |
+| `LONDON_NY_OVERLAP` | 12:00–16:00 | 8 | 1.0% | 6% |
+| `NEW_YORK` | 16:00–21:00 | 6 | 1.0% | 5% |
+| `ROLLOVER` | 21:00–22:00 | 2 | 0.25% | 3% |
+
+These are the **owner baselines** in `config.json → session_profiles`. The loss budgets add up to `daily_loss_limit_pct` (5%), so **a bad Asian session can't use up London's budget**. The global daily loss stop still applies on top.
+
+### Daily Session Grading
+Once per UTC day, each session's trades from the last 5 days are scored in R (pips ÷ SL pips):
+
+| Level | Trigger | Effect |
 |---|---|---|
-| **7 Major Pairs** | `EURUSD`, `GBPUSD`, `USDJPY`, `USDCHF`, `AUDUSD`, `NZDUSD`, `USDCAD` | Highest global liquidity, tightest broker spreads |
-| **6 Euro Crosses** | `EURGBP`, `EURJPY`, `EURCHF`, `EURAUD`, `EURNZD`, `EURCAD` | European macro drivers & liquidity flows |
-| **5 Pound Crosses** | `GBPJPY`, `GBPCHF`, `GBPAUD`, `GBPNZD`, `GBPCAD` | High-volatility session runners |
-| **4 Aussie Crosses** | `AUDJPY`, `AUDCHF`, `AUDNZD`, `AUDCAD` | Asian / Pacific commodity proxies |
-| **3 Kiwi Crosses** | `NZDJPY`, `NZDCHF`, `NZDCAD` | High-beta Pacific currency crosses |
-| **3 Yen / Swiss Crosses**| `CADJPY`, `CADCHF`, `CHFJPY` | Carry trade & European safe-haven plays |
-| **Commodity / Metal** | `XAUUSD` | Spot Gold vs US Dollar (\$300 min balance guard) |
+| `NORMAL` | Default / recovered | Owner baseline |
+| `REDUCED` | ≥ 20 trades and avg R < −0.15 | Half the slots, USD majors only, spread cap ≤ 4% |
+| `MINIMAL` | ≥ 20 trades and avg R < −0.30 | 1 slot, USD majors only, spread cap ≤ 3% |
+
+A session moves **up one level per day** once it has ≥ 10 trades at avg R ≥ 0. Grading only ever tightens and restores; it **never goes above the owner baseline**. Levels persist in `state/session_levels.json`, and every review is logged as `SESSION_REVIEW` in `agent.log` and Supabase. Thresholds are in `session_profiles.grading`.
+
+### Asia Range-Fade Strategy (Shadow Mode)
+Asian hours are range-bound, so Asia also runs a separate deterministic strategy (`core/session_strategies.py`) that **paper-trades only**:
+
+- **Symbols:** EURUSD, GBPUSD, AUDUSD, USDCAD, USDJPY, 00:00–06:00 UTC.
+- **Entries:** BUY when the last M5 close is below the Bollinger(20, 2.0) lower band with RSI(14) < 30. SELL on the mirror setup.
+- **Exits:** SL = max(1.5 × ATR, 8 pips), TP = 1R. Every trade is force-closed at 07:00 UTC.
+- **Recording:** paper fills happen at the live bid/ask (real spread) and are resolved on M5 bars (SL wins intrabar ties). Results go to `state/asia_shadow_trades.jsonl`.
+- **Feed guard:** no paper trades on weekends or when the price feed is stale.
+
+A 155-day backtest found about +0.05R per trade **before costs**, but break-even or negative after a realistic 0.3–1.0 pip cost. It therefore stays in shadow mode until it has **100+ paper trades averaging ≥ +0.05R**, and then needs the owner's approval to go live. A config value of `mode: "live"` is deliberately forced back to shadow.
 
 ---
 
-## 📁 Project Directory & File Structure
+## 🛡️ Deterministic Risk Walls (14 Layers)
 
-```
-bubat AI/
-├── .env                                  # Environment variables (Supabase, Gemini API Keys)
-├── .gitignore                            # Protection against committing logs, cache, or credentials
-├── README.md                             # This documentation
-├── assistant.bat                         # 1-click launcher for Local Autonomous Assistant
-├── run_agent.bat                         # 1-click launcher for 24/7 Forex Trading Loop
-├── chat.bat                              # 1-click launcher for Interactive Market Intelligence Chat
-├── stop_all.bat                          # 1-click bulletproof process terminator
-└── forex_local_agent/                    # Core trading agent package
-    ├── config.json                       # Central system configuration (risk, pairs, model)
-    ├── Modelfile                         # Custom Ollama model definition (32K context window)
-    ├── requirements.txt                  # Python dependencies
-    ├── main.py                           # Master orchestration loop & candle synchronizer
-    ├── chat.py                           # Interactive market analysis chat with live MT5 scan
-    ├── local_assistant.py                # Local autonomous coding & systems agent
-    │
-    ├── core/
-    │   ├── agent_logic.py                # Qualitative LLM reasoning (Ollama + multi-tier parser
-    │   │                                 #   + synonym normalizer + circuit breaker)
-    │   ├── mt5_engine.py                 # MT5 API + ATR math + trailing stop manager
-    │   ├── market_scanner.py             # 29-pair live technical scanner & opportunity ranker
-    │   ├── web_surfer.py                 # High-speed live financial news & web intelligence
-    │   ├── sentiment_engine.py           # News aggregation with SearXNG + RSS fallback
-    │   ├── openclaw_bridge.py            # WhatsApp approval gateway & email alerts
-    │   └── supabase_manager.py           # Supabase REST & PostgreSQL telemetry sync
-    │
-    ├── learning/
-    │   ├── continuous_learner.py         # Autonomous rule capture engine
-    │   ├── memory_manager.py             # ChromaDB / JSON episodic memory & recall
-    │   ├── skill_factory.py              # Dynamic trading skill code generator
-    │   ├── learned_rules.md              # Curated trading rules (quality-filtered by loader)
-    │   └── skills/
-    │       ├── __init__.py               # Skill export registry
-    │       ├── economic_calendar_filter.py # ForexFactory calendar blackout parser
-    │       ├── currency_correlation_filter.py # Portfolio exposure & correlation risk monitor
-    │       ├── template_skill.py         # Skill template for auto-generated tools
-    │       ├── skills_index.json         # Skill metadata registry
-    │       └── calendar_cache.json       # Local TTL cache for macroeconomic events
-    │
-    ├── tests/
-    │   └── test_mock_cycle.py            # 8-step sandboxed end-to-end regression test suite
-    │
-    ├── maintenance/
-    │   ├── model_updater.py              # Automated weekly model discovery & hot-swap
-    │   └── daily_report.py               # 24h post-mortem metrics, counterfactuals & baselines (JSON -> reports/)
-    │
-    └── logs/
-        ├── trades.log                    # All proposed and executed trades
-        ├── system_errors.log             # Exception traces and critical diagnostics
-        ├── code_evolution.log            # Audit trail of autonomous patches & improvements
-        └── model_auditions.log           # Audition logs from model upgrade benchmarks
-```
+`MT5Engine.execute_trade()` checks these **in order**. The first failure rejects the trade with a logged reason. Every rejection is recorded, and the daily report later simulates what rejected signals would have earned.
+
+| # | Wall | Rule |
+|---|---|---|
+| 1 | **Entry Window** | Optional: new trades only inside `entry_hours_utc` (`null` = all sessions, current setting) |
+| 2 | **Confidence Calibration Cap** | Rejects LLM confidence above `max_confidence` (0.89); the top confidence buckets were anti-predictive |
+| 3 | **H1 Trend** | Never BUY against a BEARISH H1; never SELL against a BULLISH H1 |
+| 4 | **Daily Loss Stop** | Blocks new entries once net realized loss since 00:00 **real UTC** exceeds `daily_loss_limit_pct` (5%) of balance |
+| 5 | **Capacity** | Max `max_open_trades` (10) positions account-wide |
+| 6 | **Duplicate Position** | One open position per symbol |
+| 7 | **News Blackout** | 30 min before to 15 min after high-impact news for either currency. Tier-1 USD releases (NFP, CPI, Fed rate, FOMC) black out **all** symbols |
+| 8 | **Currency Correlation** | Max `max_currency_exposure` (3) open positions involving any single currency |
+| 9 | **Gold Balance Guard** | No `XAUUSD` on accounts under \$300 |
+| 10 | **Per-Trade Risk Cap** | Rejects if the actual loss at SL exceeds `max_drawdown_pct` (2%) of balance |
+| 11 | **Spread (pips)** | Rejects if the live spread exceeds `max_spread_pips` (3.5) |
+| 12 | **Spread Cost** | Rejects if the live spread exceeds `max_spread_sl_ratio` (6%) of the SL distance |
+| 13 | **Session Profile** | Current session's symbol list, slot cap, spread cap and loss budget (see above) |
+| 14 | **Margin** | Rejects if free margin is insufficient for the order |
+
+> These walls are plain Python. The LLM cannot override, bypass or modify them.
 
 ---
 
 ## ⚙️ Subsystem Deep Dive
 
-### 1. Deterministic Math & Execution Engine (`core/mt5_engine.py`)
-Computes trade geometry mathematically without LLM hallucination:
-* **BUY Orders**:
-  $$\text{Entry Price} = \text{Ask}$$
-  $$\text{Stop Loss} = \text{Entry} - \max(\text{ATR}_{14} \times \text{Multiplier}_{\text{SL}}, \text{Floor}_{\text{pips}})$$
-  $$\text{Take Profit} = \text{Entry} + (\text{ATR}_{14} \times \text{Multiplier}_{\text{TP}})$$
-* **SELL Orders**:
-  $$\text{Entry Price} = \text{Bid}$$
-  $$\text{Stop Loss} = \text{Entry} + \max(\text{ATR}_{14} \times \text{Multiplier}_{\text{SL}}, \text{Floor}_{\text{pips}})$$
-  $$\text{Take Profit} = \text{Entry} - (\text{ATR}_{14} \times \text{Multiplier}_{\text{TP}})$$
+### 1. Deterministic Trade Geometry (`core/mt5_engine.py`)
+* **BUY:** entry at Ask; $\text{SL} = \text{Entry} - \max(1.5 \times \text{ATR}_{14},\ \text{floor})$; $\text{TP} = \text{Entry} + 3.0 \times \text{ATR}_{14}$
+* **SELL:** mirror image at Bid.
+* **SL floors:** forex **15 pips**, gold **\$3.50**. When the floor widens the SL, the TP is widened to keep at least **1:1.5** R:R.
+* **Lot sizing:** `lot_mode: "fixed"` (current) uses `fixed_lot` (0.01). In risk mode, the lot comes from the formula below and is clamped to the broker's `volume_min / volume_step / volume_max` and to `max_lot_size`:
 
-* **Asset-Class Volatility Floors**:
-  * **Forex Pairs**: Minimum **15.0 pips** Stop Loss floor. Stops tighter than 15.0 pips are automatically widened (and Take Profit expanded to maintain minimum 1:1.5 to 1:2.0 Risk/Reward).
-  * **Gold (`XAUUSD`)**: Minimum **\$3.50 (350 points)** Stop Loss floor to absorb normal commodity volatility.
+  $$\text{Lot} = \frac{\text{Balance} \times \text{risk\_per\_trade\_pct}/100}{(|\text{Entry} - \text{SL}| / \text{tick size}) \times \text{tick value}}$$
 
-* **Dynamic Lot Sizing (Risk Formula)**:
-  $$\text{Monetary Risk} = \text{Account Balance} \times \left(\frac{\text{risk\_per\_trade\_pct}}{100}\right)$$
-  $$\text{Loss Per Lot} = \left(\frac{|\text{Entry} - \text{SL}|}{\text{Tick Size}}\right) \times \text{Tick Value}$$
-  $$\text{Calculated Lot} = \frac{\text{Monetary Risk}}{\text{Loss Per Lot}}$$
+* **Broker constraints:** `TRADE_STOPS_LEVEL` is respected, and a margin check runs before every order.
 
-* **Broker Constraints Guard**: Enforces broker `TRADE_STOPS_LEVEL`, clamps volume to `volume_min`, `volume_step`, `volume_max`, and `max_lot_size`.
+### 2. Break-Even & Trailing Manager
+Runs every **15 seconds** while the agent waits for the next candle:
+* **Break-even:** at **+15 pips** profit, the SL moves to entry + 1 pip.
+* **Trailing:** from **+20 pips** profit, the SL trails **10 pips** behind price, updated when it can improve by ≥ **2 pips**.
+* All values are configurable (`trailing_*` keys). Replaying 412 trades on M5 bars, these settings beat the earlier 10/15-pip settings, but **no management** still came out ahead overall. This is tracked daily in `execution_quality.py`.
 
----
+### 3. Qualitative LLM Reasoner (`core/agent_logic.py`)
+* Local **Ollama** model `agent-brain:32k`, built from `qwen2.5-coder:1.5b` with a 32K context (`Modelfile`). Temperature 0.1, `num_predict` 800.
+* **Multi-tier JSON parser:**
+  1. Strict JSON parse plus synonym normalization (`HOLD`/`FLAT` → `WAIT`, `LONG` → `BUY`, `"82%"` → `0.82`, …).
+  2. Repair of unclosed strings and brackets.
+  3. Regex field extraction.
+  Each decision records its parse tier, number of attempts and fallback flag for telemetry.
+* **Circuit breaker:** after 5 consecutive Ollama failures, the agent stops querying for 60 seconds, then retries automatically.
+* **Curated rules only** (`learning/rules_loader.py`): `### [CATEGORY]` rules are injected as one-liners, capped at **2,500 chars** on whole-rule boundaries. `REFLEXION` / `COMMUNICATION` rules and anything sourced from loss reflexion are never injected into the trading prompt.
 
-### 2. Institutional Risk Walls & Defense-in-Depth
+### 4. News & Web Intelligence (`core/sentiment_engine.py`, `core/web_surfer.py`)
+* The agent probes SearXNG (`localhost:8080`) once. If it's offline, it falls back to Google News / Investing.com RSS.
+* Live headlines per pair in about 0.3–0.7 s, with article context fetched concurrently under strict timeouts. News is never allowed to block a cycle.
 
-Before any order is dispatched to MetaTrader 5, it must pass through **9 deterministic risk walls** in sequence:
+### 5. Economic Calendar Filter (`learning/skills/economic_calendar_filter.py`)
+* ForexFactory weekly JSON feed with a 2-hour local cache.
+* High-impact blackout from 30 min before to 15 min after each event. **Tier-1 USD events** (NFP, CPI, Fed funds rate, FOMC) black out every symbol, not only USD pairs (`news_blackout_global_tier1`).
+* Upcoming events are also included in the LLM prompt as context.
 
-| Wall # | Name | Logic |
-|---|---|---|
-| 1 | **H1 Multi-Timeframe Trend Wall** | Never BUY if H1 is BEARISH; never SELL if H1 is BULLISH |
-| 2 | **Daily Loss Stop** | Blocks all new entries when net realized losses (profit + swap + commission) since 00:00 **real UTC** exceed `daily_loss_limit_pct` (5%) of balance |
-| 3 | **Capacity Wall** | Max **10 open trades** account-wide |
-| 4 | **Duplicate Position Wall** | Only **one active position per symbol** |
-| 5 | **Economic News Blackout Wall** | Rejects if high-impact news for either currency is ≤30 min ahead or ≤15 min past. Tier-1 USD releases (NFP, CPI, Fed rate decision, FOMC) black out **all** symbols (`news_blackout_global_tier1`) |
-| 6 | **Currency Correlation Wall** | Max **3 positions per currency** to prevent correlated cascade stops |
-| 7 | **Margin Gatekeeper** | Rejects if free margin is negative or insufficient |
-| 8 | **Spread Protection Wall** | Rejects if live spread exceeds `max_spread_pips` (3.5 pips) |
-| 9 | **Gold Balance Guard** | Forbids `XAUUSD` on accounts under **\$300 USD** |
-| 10 | **Entry Window Wall** | Optional: new trades only inside `entry_hours_utc` (`null` = all sessions trade, the current setting) |
-| 11 | **Confidence Calibration Cap** | Rejects LLM confidence above `max_confidence` (0.89); the highest buckets have been anti-predictive |
-| 12 | **Spread Cost Wall** | Rejects if live spread exceeds `max_spread_sl_ratio` (6%) of the SL distance |
-| 13 | **Session Profile Wall** | Per-session symbols, open-trade slots, spread cap and **daily loss budget** (`session_profiles`); budgets sum to `daily_loss_limit_pct`, so one bad session cannot lock out the others |
+### 6. Currency Correlation Filter (`learning/skills/currency_correlation_filter.py`)
+Splits each pair into its two currencies (e.g. `GBPJPY` → `GBP` + `JPY`) and blocks a new trade once any currency already appears in `max_currency_exposure` open positions. This stops one currency move from hitting several stops at once.
 
-> **Note:** These walls are deterministic Python code — the LLM cannot override, bypass, or modify them.
+### 7. Broker Server Time (`core/mt5_time.py`)
+MT5 stamps deals, ticks and bars in **broker server time** (e.g. UTC+3), and history queries compare against that clock. Querying with plain UTC silently misses the most recent hours of deals. `mt5_time.py` measures the offset from fresh ticks during market hours, rounds it to whole hours, persists it in `state/mt5_server_offset.json`, and provides the helpers that every history query uses (`history_deals_utc`, `server_epoch_to_utc`). The daily loss stop, cooldowns and reports all rely on it.
 
-> **Per-session execution:** every session trades, each with its own profile (`core/session_profiles.py`). Once per UTC day each session is graded from its last 5 days of trades (R = pips / SL pips, by entry hour): `NORMAL` (owner baseline), `REDUCED` (half the slots, USD majors only, spread <= 4% of SL) when n >= 20 and avg R < -0.15, `MINIMAL` (1 slot, USD majors, spread <= 3%) when avg R < -0.30; it steps back up one level per day after n >= 10 trades at avg R >= 0, and never above the baseline. Levels persist in `state/session_levels.json`; each review is logged as `SESSION_REVIEW`.
+### 8. Learning & Memory (`learning/`)
+* **Loss reflexion:** each losing trade (with entry, original SL/TP, exit type and hold time) gets an LLM post-mortem. The proposed rule is validated and **quarantined** in `learning/reflexion_candidates.jsonl`. It never goes into `learned_rules.md` or any prompt. Processed tickets persist in `state/processed_tickets.json`, so restarts don't re-reflect old trades.
+* **Curated rules:** `learned_rules.md` holds rules added by the daily audit, synced to Supabase `forex_learned_rules`.
+* **Episodic memory:** ChromaDB stores past episodes for similarity recall in the prompt.
+* **Continuous learner:** captures owner instructions and preferences from chat sessions.
 
-> **Asia shadow strategy:** in addition, Asian hours (00:00-06:00 UTC) run a separate deterministic **range-fade** strategy on 5 low-spread majors (`session_strategies.asia_range_fade`): fade M5 Bollinger(20, 2.0) extremes confirmed by RSI(14) < 30 / > 70, SL = max(1.5 x ATR, 8 pips), TP = 1R, force-exit at 07:00 UTC. A 180-day backtest showed about +0.05R/trade before costs but roughly break-even after a realistic 0.3-1.0 pip cost, so it runs in **shadow mode**: paper trades at the live bid/ask, resolved on M5 bars, logged to `state/asia_shadow_trades.jsonl`, and **no orders are sent**. Going live needs the owner's approval after 100+ paper trades averaging at least +0.05R (`execution_quality.py` reports progress).
-
-> **Ranked execution:** each cycle first analyses every symbol, then executes the tradeable signals best-first (full H1 trend before bias-only, then lowest spread/SL) so the limited open-trade slots go to the best setups instead of whichever symbol comes first in the config (`rank_signals`).
-
-> **Broker server time:** MT5 stamps deals, ticks and bars in broker server time (Tickmill: UTC+2/UTC+3). Every history query goes through `core/mt5_time.py`, which measures the offset from live ticks during market hours and persists it in `state/`. Querying MT5 with plain UTC datetimes silently misses the most recent hours of deals.
-
-
----
-
-### 3. Economic Calendar & News Blackout Filter (`learning/skills/`)
-* Connects to the **ForexFactory weekly JSON feed** (`nfs.faireconomy.media/ff_calendar_thisweek.json`).
-* Maintains a local disk cache (`calendar_cache.json`) with a 2-hour TTL.
-* **Deterministic Blackout Window**:
-  * **30 minutes prior** to High-Impact events (CPI, NFP, Fed/Central Bank Rate Decisions, GDP).
-  * **15 minutes after** release (allowing broker spread blowout to normalize).
-* Injects structured upcoming event schedules into LLM prompts for macro awareness.
-
----
-
-### 4. Currency Correlation & Portfolio Exposure Filter (`learning/skills/`)
-* **Decomposes** each forex pair into base and quote currencies (e.g., `GBPJPY` → `GBP` + `JPY`).
-* **Tracks gross exposure** per currency across all open positions.
-* **Blocks new trades** when any single currency exceeds `max_currency_exposure` (default: **3 positions**).
-  * Example: If you have 3 positions involving JPY (`USDJPY`, `EURJPY`, `GBPJPY`), a 4th JPY pair is rejected.
-* Prevents **correlated cascade stop-outs** where one currency move wipes multiple positions simultaneously.
-* Integrated directly into `mt5_engine.py` as Risk Wall #5.
-
----
-
-### 5. Resilient Qualitative LLM Reasoner (`core/agent_logic.py`)
-* Powered by local **Ollama** model (`agent-brain:32k` — Qwen 2.5 Coder with 32K context).
-* **Temperature calibrated to `0.1`** for strict JSON format consistency.
-* **Token limit: `800` tokens** (`num_predict: 800`) to prevent mid-string truncations.
-* **Multi-Tier Resilient Parser**:
-  * **Tier 1:** `json.loads(strict=False)` → `_normalize_trade_decision_dict()` — handles unescaped newlines and field synonyms.
-  * **Tier 2:** Auto-repair of unclosed reasoning strings and missing brackets.
-  * **Tier 3:** Deterministic regex fallback with `re.S` multiline support, extracting fields by alias (`decision/action/signal`, `sentiment/market_sentiment`, `confidence_score/confidence/score`).
-* **Synonym Normalizer** (`_normalize_trade_decision_dict`): Maps LLM drift synonyms:
-  * `HOLD`, `PASS`, `STAND ASIDE`, `FLAT` → `WAIT`
-  * `SHORT`, `SELLING` → `SELL`
-  * `LONG`, `BUYING` → `BUY`
-  * `POSITIVE`, `UP` → `BULLISH`
-  * `NEGATIVE`, `DOWN` → `BEARISH`
-  * `"82%"` → `0.82`, `85` → `0.85`
-* **Ollama Circuit Breaker**: After 5 consecutive connection failures, blocks all queries for 60 seconds to prevent resource hammering. Resets automatically on first successful query.
-* **Quality-Filtered Rules Loader** (`learning/rules_loader.py`): Injects curated `### [CATEGORY]` rules as compact one-liners, capped at 2,500 chars on whole-rule boundaries (newest win). `REFLEXION` and `COMMUNICATION` rules and anything with `Source: loss_reflexion` are never injected into the trading prompt.
-
----
-
-### 6. Live WebSurfer Financial Pipeline
-Built into `core/web_surfer.py` and `core/sentiment_engine.py`:
-* **Zero SearXNG Delay**: Probes SearXNG on port 8080 once (0.6s). If offline, routes instantly to live WebSurfer (Google News RSS & Investing.com RSS).
-* Fetches live news per pair in **~0.3 to 0.7 seconds**.
-* Scrapes article context concurrently using `asyncio.gather` with strict timeouts.
-* Falls back gracefully if all external sources are unreachable — the system never blocks on news.
-
----
-
-### 7. Active Trailing Stop & Break-Even Manager
-Managed natively within `core/mt5_engine.py` on every candle cycle:
-* **Break-Even Lock**: When a position moves **+15.0 pips** into profit, Stop Loss is automatically modified to Entry Price + 1.0 pip (locking in a risk-free trade).
-* **Dynamic Trailing Stop**: When profit reaches **+20.0 pips**, Stop Loss trails **10.0 pips** behind market price, updated whenever it can improve by at least the **2.0-pip** step.
-* Fully configurable in `config.json`:
-  ```json
-  "trailing_stop_enabled": true,
-  "trailing_breakeven_pips": 15.0,
-  "trailing_breakeven_lock_pips": 1.0,
-  "trailing_start_pips": 20.0,
-  "trailing_distance_pips": 10.0,
-  "trailing_step_pips": 2.0
-  ```
-
----
-
-### 8. Multi-Pair Market Scanner (`core/market_scanner.py`)
-* Scans all 29 instruments simultaneously via MetaTrader 5 in **under 2 seconds**.
-* Calculates RSI(14), ATR(14), 20/50 EMAs, 24-hour price change %, and live broker spread.
-* Evaluates active trading sessions (London, New York, Tokyo, Sydney) and calculates an **Opportunity Score (0 to 100+)** to rank top setups.
-* Prints a clean ASCII summary table at the end of every cycle:
-  ```
-  +----------+------------+------------+--------------+--------------------------------------------------+
-  | SYMBOL   | DECISION   | CONFIDENCE | H1 TREND     | STATUS / ACTION                                  |
-  +----------+------------+------------+--------------+--------------------------------------------------+
-  | EURUSD   | BUY        | 82%        | BULLISH      | REJECTED: News blackout active for EURUSD        |
-  | GBPUSD   | BUY        | 85%        | BULLISH      | ACTIVE #25482910 (BUY 0.01 lot) [BE +1.0p LOCKED]|
-  | USDJPY   | SELL       | 78%        | BEARISH      | REJECTED: Currency exposure > 3 for USD          |
-  | XAUUSD   | WAIT       | 50%        | BULLISH      | WAIT (Balance < $300)                            |
-  +----------+------------+------------+--------------+--------------------------------------------------+
-  ```
-
----
-
-### 9. Continuous Learning & Reflexion Engine (`learning/`)
-* **Continuous Learner** (`continuous_learner.py`): Automatically captures user instructions, communication preferences, and trading rules into `learned_rules.md` and Supabase cloud.
-* **Post-Mortem Loss Reflexion**: Closed losing trades (enriched with entry, original SL/TP, exit type and hold time) trigger an LLM post-mortem. Its proposed rule is validated and **quarantined** in `learning/reflexion_candidates.jsonl`; it is never written to `learned_rules.md` or injected into prompts. Curated rules are added only by the daily audit. Processed tickets persist in `state/processed_tickets.json`, so a restart never re-reflects old losses.
-* **Post-Trade Cooldown**: `symbol_cooldown_minutes` runs from the trade's real close time.
-* **Quality-Filtered Rules**: See `learning/rules_loader.py` (shared by the trading prompt and the chat/assistant prompts).
-* **Supabase Cloud Sync**: Rules are saved to both local disk and the `forex_learned_rules` PostgreSQL table.
-* **Episodic Memory**: ChromaDB vector database stores historical trade episodes for similarity recall on future decisions.
-
----
-
-### 10. Supabase Cloud Database Telemetry (`core/supabase_manager.py`)
-Provides full cloud persistence using the Supabase PostgREST client:
-
+### 9. Supabase Telemetry (`core/supabase_manager.py`)
 | Table | Contents |
 |---|---|
-| `forex_trade_decisions` | LLM decision, confidence, sentiment, reasoning, ATR parameters |
-| `forex_executed_trades` | Ticket IDs, order types, lot size, entry price, SL, TP, execution results |
-| `forex_learned_rules` | Curated operational rules with UUID primary keys and JSONB metadata |
-| `ai_agent_telemetry` | System health, 29-pair scans, cycle latencies, error audits |
+| `forex_trade_decisions` | Decision, confidence, sentiment, reasoning, trade params, plus metadata: outcome / wall, H1 label, RSI, ATR, LLM parse health, approved / executed flags |
+| `forex_executed_trades` | Tickets, order type, lot, entry, SL, TP, execution result (including rejection message) |
+| `forex_learned_rules` | Curated rules |
+| `ai_agent_telemetry` | `CYCLE_SUMMARY`, `SESSION_REVIEW`, errors and system health |
+
+### 10. WhatsApp Approval Gateway (`core/openclaw_bridge.py`, optional)
+With `"auto_approve": false` and a configured number, each trade proposal is sent over WhatsApp, and the trade executes only if `YES` arrives at `localhost:5055/webhook/approval` within `approval_timeout_seconds`. With `"auto_approve": true` (current), trades are approved automatically but still pass every risk wall. Alerts for executions and rejections are sent either way.
+
+### 11. Market Intelligence Chat & Local Assistant
+* `chat.py` (`chat.bat`): interactive chat with the local model. It can scan all 29 instruments live and report account status (balance, open positions, floating P&L, today's realized P&L). Sessions are logged to `forex_local_agent/logs/chat_sessions.log`, with secrets scrubbed.
+* `local_assistant.py` (`assistant.bat`): a tool-using local assistant (shell commands, file read/write, Supabase queries, MT5 status, web search). The repo-root `local_assistant.py` is a launcher shim for the copy in `forex_local_agent/`.
 
 ---
 
-### 11. Human-In-The-Loop WhatsApp Gateway (`core/openclaw_bridge.py`)
-* Optional semi-autonomous mode: High-confidence signals (≥80%) trigger a WhatsApp proposal via OpenClaw:
-  ```text
-  PROPOSAL: BUY EURUSD
-  Lot: 0.01 | Entry: 1.13570
-  SL: 1.13420 | TP: 1.13810
-  ATR: 0.00031 | R:R 1:2.0
-  Risk: $1.50 | Confidence: 82%
-  Reason: Strong bullish EMA breakout with RSI momentum.
-  Reply YES to execute or NO to abort.
-  ```
-* Waits on webhook `http://localhost:5055/webhook/approval`. If `YES` is received within 300s, the order executes; otherwise it expires safely.
-* **Autonomous mode** (`"auto_approve": true`) bypasses WhatsApp for 100% hands-free trading.
+## 🧬 Daily Post-Mortem & Self-Improvement Loop
 
----
-
-## 🧬 Self-Evolving Code Architecture
-
-Bubat AI features a unique **autonomous self-improvement pipeline** where the system diagnoses its own bugs, writes patches, and deploys fixes without human intervention:
+The system is improved through a **daily, human-supervised audit**, not by unsupervised self-modification:
 
 ```mermaid
 flowchart LR
-    A["24h Post-Mortem Audit"] --> B["Root-Cause Diagnosis"]
-    B --> C{"Bug Found?"}
-    C -- Yes --> D["Auto-Patch Code"]
-    C -- No --> E["Calibrate Parameters"]
-    D --> F["Regression Tests"]
-    E --> F
-    F --> G{"All Passed?"}
-    G -- Yes --> H["Git Commit & Push"]
-    G -- No --> I["Rollback & Alert"]
-    H --> J["Log to code_evolution.log"]
+    A["Collect last 24h: MT5 deals, logs, Supabase"] --> B["daily_report.py + execution_quality.py"]
+    B --> C["Root causes labelled CONFIRMED / LIKELY / HYPOTHESIS"]
+    C --> D{"Adds risk?"}
+    D -- No --> E["Implement fix + regression test"]
+    D -- Yes --> F["Listed under NEEDS APPROVAL for the owner"]
+    E --> G["Tests pass -> restart main.py -> watch cycles"]
+    G --> H["Commit, push, append logs/code_evolution.log"]
 ```
 
-### Evolution Features
-* **Circuit Breaker Pattern**: Prevents cascading failures when Ollama or external services go down. Opens after 5 consecutive failures, blocks for 60s, auto-resets on recovery.
-* **Synonym Normalizer**: Learns from LLM output drift and maps non-standard responses back to valid enum values without crashing.
-* **Autonomous Code Patching**: Daily maintenance cycles identify bugs from `system_errors.log`, write fixes, run regression tests, and commit to `origin/master`.
-* **Evolution Audit Trail**: All patches are logged to `logs/code_evolution.log` with timestamps, metrics, and rationale.
+* **Evidence rules:** only CONFIRMED (≥ 30 trades, or repeated in ≥ 2 cycles) or LIKELY findings may change strategy parameters, with at most 2 parameter changes per cycle. Every bug fix gets a regression test.
+* **Owner approval required** for anything that adds risk: bigger lots, more open trades, a lower confidence threshold, a smaller SL floor, a loosened wall, new symbols, or account / broker changes.
+* **Audit trail:** `forex_local_agent/logs/code_evolution.log` (public, so it contains no account details) records every cycle's metrics, findings, commits and watch-list.
 
----
-
-## 🦾 Autonomous System & Coding Agent (`local_assistant.py`)
-
-The workspace includes a built-in **autonomous coding and systems agent** powered by local Ollama:
-* `execute_command(command)`: Executes shell commands via PowerShell.
-* `read_file(path, start_line, end_line)`: Inspects code and configs with line slicing.
-* `write_file(path, content, mode)`: Autonomously creates or edits files.
-* `list_directory(path, recursive)`: Explores folders and projects.
-* `query_database(sql)`: Directly queries Supabase PostgreSQL.
-* `get_system_status()`: Checks MT5 terminal connection, account equity, and disk space.
-* `web_search(query)`: Performs real-time web search.
-
-Launch anytime via:
-```powershell
-.\assistant.bat
-```
-
----
-
-## 🧪 Automated Regression Test Suite (`tests/test_mock_cycle.py`)
-
-A sandboxed dry-run test suite validates the entire end-to-end trading pipeline without placing real orders:
-```powershell
-python forex_local_agent/tests/test_mock_cycle.py
-```
-
-### Validated Pipeline Steps (8 Assertions):
-| Step | Test |
-|---|---|
-| 1 | **Engine Initialization**: Connects to MT5 terminal and loads account credentials |
-| 2 | **Bar Retrieval**: Pulls live bars, ATR(14), RSI(14), and H1 MTF trend confirmation |
-| 3 | **Sentiment & Calendar Scraper**: Fetches live headlines and checks ForexFactory blackout |
-| 4 | **Ollama Qualitative Reasoning**: Verifies JSON schema compliance and parsing |
-| 5 | **Deterministic ATR Math**: Verifies SL floor (15.0 pips), 1:2 R:R, and lot sizing |
-| 6 | **Trailing Stop Manager**: Evaluates break-even / trailing logic on live positions with `order_send` intercepted (nothing reaches the broker) |
-| 7 | **Risk Wall Defenses**: Tests H1 trend wall, capacity wall, and spread wall |
-| 8 | **Currency Correlation Wall**: Validates portfolio exposure limits per currency |
-
-The whole mock cycle runs with `mt5.order_send` patched, so no test can open, close or modify a real position.
-
-### Offline Regression Tests
-```powershell
-python forex_local_agent/tests/test_cycle5_regressions.py   # rules loader, reflexion quarantine, MT5 server time, daily loss, tier-1 blackout, trailing config, chatbot
-python forex_local_agent/tests/test_execution_upgrade.py    # ranked execution, entry window, confidence cap, spread cost wall, no-lookahead simulation
-python forex_local_agent/tests/test_session_profiles.py     # per-session slots, spread cap, loss budget, daily grading
-python forex_local_agent/tests/test_session_strategies.py   # Asia range-fade signal, paper trade fill/resolve, shadow runner never sends orders
-python forex_local_agent/tests/test_daily_loss_stop.py
-python forex_local_agent/tests/test_chat_logger.py
-```
-
-### Daily Post-Mortem Report
+### Reports
 ```powershell
 python forex_local_agent/maintenance/daily_report.py --hours 24
 ```
-Prints and saves (to `reports/`, gitignored) win rate, payoff, profit factor, expectancy, peak-to-trough drawdown, breakdowns by symbol / direction / session / hour / confidence / exit type / spread / H1 alignment, cost drag, exposure, LLM health, risk-wall counts, counterfactual R for rejected signals, and the LLM vs follow-H1-trend vs always-WAIT baselines. Simulated entries use the next M5 bar open (no lookahead).
+Outputs win rate, payoff, profit factor, expectancy and peak-to-trough drawdown. It breaks results down by symbol, direction, session, hour, confidence, exit type, spread and H1 alignment, and also reports:
+- cost drag, exposure and LLM health;
+- risk-wall counts;
+- **counterfactual R** for rejected signals, by wall;
+- **LLM vs follow-H1-trend vs always-WAIT** baselines.
+
+Simulated entries use the next M5 bar's open, so there is no lookahead.
 
 ```powershell
 python forex_local_agent/maintenance/execution_quality.py --hours 24
 ```
-Execution-quality breakdown: real fills vs a shadow entry at the next bar open, managed vs unmanaged R, R by spread/SL bucket, and quick same-symbol re-entries.
+Breaks down where R is lost between signal and result:
+- real fills vs a shadow entry one bar later;
+- managed vs unmanaged R;
+- R by spread/SL bucket;
+- quick same-symbol re-entries;
+- a **per-session breakdown** with current grading levels;
+- the Asia shadow strategy's progress toward its promotion bar.
+
+Both scripts are read-only and save JSON to `forex_local_agent/reports/` (gitignored).
 
 ---
 
-## 🛠️ System Requirements & Hardware Setup
+## 📁 Project Structure
 
-| Component | Minimum | Recommended (Tested Configuration) |
-|---|---|---|
-| **Operating System** | Windows 10/11 64-bit | Windows 11 64-bit |
-| **GPU** | NVIDIA GTX 1660 (6 GB) | NVIDIA RTX 4060 (8 GB VRAM) or higher |
-| **RAM** | 16 GB | 32 GB DDR4 / DDR5 |
-| **Python** | Python 3.10+ | Python 3.13 64-bit |
-| **Broker Terminal** | MetaTrader 5 Build 4000+ | MetaTrader 5 Build 5.0+ (Tickmill-Demo) |
+```
+bubat AI/
+├── README.md                          # This document
+├── run_agent.bat                      # Start the trading loop (main.py)
+├── chat.bat                           # Market intelligence chat
+├── assistant.bat                      # Local tool-using assistant
+├── stop_all.bat                       # Stop Ollama + all agent processes
+├── local_assistant.py                 # Launcher shim -> forex_local_agent/local_assistant.py
+├── .env                               # Secrets (gitignored)
+└── forex_local_agent/
+    ├── main.py                        # Orchestrator: analyse -> rank -> execute -> learn -> wait
+    ├── config.json                    # All risk, session, strategy and model settings
+    ├── Modelfile                      # Ollama model definition (32K context)
+    ├── requirements.txt
+    ├── chat.py / chat_logger.py       # Interactive chat + secret-scrubbed session log
+    ├── local_assistant.py             # Tool-using local assistant
+    ├── core/
+    │   ├── mt5_engine.py              # MT5 API, trade geometry, 14 risk walls, trailing manager
+    │   ├── mt5_time.py                # Broker server-time offset + UTC-correct history queries
+    │   ├── trade_analytics.py         # Shared pure helpers: sessions, exits, ranking, wall labels, sims
+    │   ├── session_profiles.py        # Per-session profiles, loss budgets, daily grading
+    │   ├── session_strategies.py      # Asia range-fade strategy (shadow / paper only)
+    │   ├── agent_logic.py             # LLM prompt, multi-tier parser, circuit breaker
+    │   ├── market_scanner.py          # 29-instrument technical scanner
+    │   ├── sentiment_engine.py        # News aggregation (SearXNG + RSS fallback)
+    │   ├── web_surfer.py              # Fast live news / web fetcher
+    │   ├── openclaw_bridge.py         # WhatsApp approvals, alerts, webhook :5055
+    │   └── supabase_manager.py        # Supabase telemetry
+    ├── learning/
+    │   ├── rules_loader.py            # Curated, capped rule injection
+    │   ├── reflexion_store.py         # Reflexion validator + quarantine + processed tickets
+    │   ├── continuous_learner.py      # Owner instruction / preference capture
+    │   ├── memory_manager.py          # ChromaDB episodic memory
+    │   ├── skill_factory.py           # Skill code generator
+    │   ├── learned_rules.md           # Curated rules
+    │   └── skills/
+    │       ├── economic_calendar_filter.py
+    │       ├── currency_correlation_filter.py
+    │       └── template_skill.py
+    ├── maintenance/
+    │   ├── daily_report.py            # 24h post-mortem metrics, counterfactuals, baselines
+    │   ├── execution_quality.py       # Entry timing, management, spread, per-session breakdown
+    │   └── model_updater.py           # Weekly model discovery & hot-swap
+    ├── tests/                         # Offline regression suites + sandboxed mock cycle
+    ├── logs/                          # agent.log, trades.log, system_errors.log, chat_sessions.log (gitignored)
+    │   └── code_evolution.log         # Public audit trail of every improvement cycle
+    ├── state/                         # Runtime state (gitignored): server offset, processed tickets,
+    │                                  #   session levels, Asia shadow trades
+    └── reports/                       # Report JSON output (gitignored)
+```
 
-### Software Stack
-| Component | Role | Local Port |
+---
+
+## 🛠️ System Requirements
+
+| Component | Minimum | Tested |
 |---|---|---|
-| **Ollama** | Local LLM inference server | `localhost:11434` |
-| **MetaTrader 5** | Broker terminal & execution | IPC (shared memory) |
-| **SearXNG** *(optional)* | Privacy-respecting news search | `localhost:8080` |
-| **Supabase** | Cloud PostgreSQL telemetry | Remote (HTTPS) |
+| **OS** | Windows 10/11 64-bit | Windows 11 64-bit |
+| **GPU** | NVIDIA GTX 1660 (6 GB) | NVIDIA RTX 4060 (8 GB) |
+| **RAM** | 16 GB | 32 GB |
+| **Python** | 3.10+ | 3.13 64-bit |
+| **Broker terminal** | MetaTrader 5 | MetaTrader 5 (Tickmill, server UTC+2/+3) |
+
+| Service | Role | Address |
+|---|---|---|
+| **Ollama** | Local LLM inference | `localhost:11434` |
+| **MetaTrader 5** | Market data & execution | Local terminal (IPC) |
+| **SearXNG** *(optional)* | News search | `localhost:8080` |
+| **Supabase** | Cloud telemetry | HTTPS |
 | **OpenClaw** *(optional)* | WhatsApp approval webhook | `localhost:5055` |
 
 ---
 
-## 🚀 Installation & Quick Start Guide
+## 🚀 Installation & Quick Start
 
-### Step 1: Clone Repository
+**1. Clone**
 ```powershell
 git clone https://github.com/syarief02/bubat-ai.git "bubat AI"
 cd "bubat AI"
 ```
 
-### Step 2: Install Python Dependencies
+**2. Install dependencies**
 ```powershell
 cd forex_local_agent
 python -m pip install -r requirements.txt
 ```
 
-### Step 3: Configure Environment Variables (`.env`)
-Create or edit `.env` in the project root (`bubat AI/.env`):
+**3. Create `.env`** in the repo root (it is gitignored, never commit it):
 ```ini
-GEMINI_API_KEY=your_key
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 DATABASE_URL=postgresql://postgres:password@db.your-project.supabase.co:5432/postgres
+GEMINI_API_KEY=your_key   # optional
 ```
 
-### Step 4: Set Up Ollama Local Brain
-1. Download and install [Ollama for Windows](https://ollama.com).
-2. Pull base model and build 32K context model:
-   ```powershell
-   ollama pull qwen2.5-coder:1.5b
-   cd forex_local_agent
-   ollama create agent-brain:32k -f Modelfile
-   ```
-
-### Step 5: Configure MetaTrader 5
-1. Launch MT5 and log into your broker account.
-2. Under **Tools** → **Options** → **Expert Advisors**:
-   - Check **"Allow Algo Trading"**
-   - Check **"Allow DLL imports"**
-   - Click **OK**
-3. Ensure the green **"Algo Trading"** button on the toolbar is active.
-4. In **Market Watch** (`Ctrl + U`), ensure all 28 forex pairs + XAUUSD are visible.
-
-### Step 6: Launch the Agent
+**4. Build the local model**
 ```powershell
+ollama pull qwen2.5-coder:1.5b
+cd forex_local_agent
+ollama create agent-brain:32k -f Modelfile
+```
+
+**5. Prepare MetaTrader 5**
+- Log in to your broker account (**use a demo account first**).
+- Under **Tools → Options → Expert Advisors**, enable **Allow Algo Trading**. Make sure the **Algo Trading** toolbar button is on.
+- In **Market Watch** (`Ctrl+U`), show all 28 pairs and `XAUUSD`.
+
+**6. Run the tests, then start the agent**
+```powershell
+python forex_local_agent/tests/test_session_profiles.py
 .\run_agent.bat
 ```
-
-The agent will:
-1. Connect to MT5 and verify account credentials
-2. Scan all 29 instruments for technical data
-3. Fetch live news for each pair
-4. Query the local LLM for directional decisions
-5. Execute trades that pass all 8 risk walls
-6. Print a summary table and wait for the next M5 candle close
+The agent connects to MT5 and runs its first cycle immediately, then one cycle per M5 candle close.
 
 ---
 
-## ⚙️ Configuration Guide (`config.json`)
+## ⚙️ Configuration Reference (`config.json`)
 
-Located at `forex_local_agent/config.json`:
+All settings live in `forex_local_agent/config.json`. The agent reads them at startup, so restart it after changes.
 
-```json
-{
-  "active_model": "agent-brain:32k",
-  "ollama_base_url": "http://localhost:11434",
-  "searxng_url": "http://localhost:8080",
-  "trading": {
-    "symbols": ["EURUSD", "GBPUSD", "USDJPY", "...all 28 pairs...", "XAUUSD"],
-    "timeframe": "M5",
-    "analysis_bars": 100,
-    "max_news_tokens": 4000,
-    "order_comment": "Bubat AI"
-  },
-  "risk_parameters": {
-    "lot_mode": "fixed",
-    "fixed_lot": 0.01,
-    "max_lot_size": 0.1,
-    "max_drawdown_pct": 2.0,
-    "max_open_trades": 10,
-    "confidence_threshold": 0.80,
-    "auto_approve": true,
-    "min_sl_pips": 15.0,
-    "max_spread_pips": 3.5,
-    "symbol_cooldown_minutes": 30,
-    "news_blackout_pre_mins": 30,
-    "news_blackout_post_mins": 15,
-    "trailing_stop_enabled": true,
-    "news_blackout_global_tier1": true,
-    "trailing_breakeven_pips": 15.0,
-    "trailing_breakeven_lock_pips": 1.0,
-    "trailing_start_pips": 20.0,
-    "trailing_distance_pips": 10.0,
-    "trailing_step_pips": 2.0,
-    "max_currency_exposure": 3,
-    "max_spread_sl_ratio": 0.06,
-    "max_confidence": 0.89,
-    "entry_hours_utc": null,
-    "rank_signals": true,
-    "daily_loss_limit_pct": 5.0
-  },
-  "model_upgrade": {
-    "scan_interval_days": 7,
-    "max_parameter_size_b": 35,
-    "architecture_filter": "coder",
-    "max_response_latency_seconds": 60
-  },
-  "memory": {
-    "backend": "chromadb",
-    "collection_name": "forex_episodes",
-    "similarity_top_k": 5
-  }
-}
+### Risk & Execution (`risk_parameters`)
+| Key | Current | Meaning |
+|---|---|---|
+| `lot_mode` / `fixed_lot` | `fixed` / `0.01` | Fixed micro-lots; risk mode sizes lots from `risk_per_trade_pct` |
+| `max_lot_size` | `0.1` | Hard ceiling on any lot |
+| `max_drawdown_pct` | `2.0` | Per-trade cap: actual loss at SL ≤ this % of balance |
+| `daily_loss_limit_pct` | `5.0` | Daily net realized loss stop (real UTC day) |
+| `max_open_trades` | `10` | Account-wide open positions |
+| `confidence_threshold` | `0.80` | Minimum LLM confidence to act |
+| `max_confidence` | `0.89` | Confidence calibration cap |
+| `auto_approve` | `true` | Skip WhatsApp approval (walls still apply) |
+| `approval_timeout_seconds` | `300` | WhatsApp approval window |
+| `min_sl_pips` | `15.0` | Forex SL floor |
+| `max_spread_pips` | `3.5` | Absolute spread limit |
+| `max_spread_sl_ratio` | `0.06` | Spread cost limit as a fraction of SL distance |
+| `symbol_cooldown_minutes` | `30` | No re-entry on a symbol for this long after a close |
+| `news_blackout_pre_mins` / `_post_mins` | `30` / `15` | News blackout window |
+| `news_blackout_global_tier1` | `true` | Tier-1 USD events black out all symbols |
+| `max_currency_exposure` | `3` | Max open positions per currency |
+| `entry_hours_utc` | `null` | Optional global entry window `[start, end)`; `null` = all sessions |
+| `rank_signals` | `true` | Rank each cycle's signals before executing |
+| `trailing_stop_enabled` | `true` | Break-even / trailing manager on/off |
+| `trailing_breakeven_pips` / `_lock_pips` | `15.0` / `1.0` | Break-even trigger and lock |
+| `trailing_start_pips` / `_distance_pips` / `_step_pips` | `20.0` / `10.0` / `2.0` | Trailing start, distance, minimum step |
+
+### Sessions (`session_profiles`)
+One block per session (`ASIA`, `LONDON`, `LONDON_NY_OVERLAP`, `NEW_YORK`, `ROLLOVER`), each with:
+- `max_open_trades`
+- `loss_budget_pct`
+- `max_spread_sl_ratio`
+- `symbols` (`null` = all)
+
+`grading` holds the daily grading thresholds (`review_days`, `reduce_below_r`, `minimal_below_r`, `min_trades_down`, `min_trades_up`, `restore_at_or_above_r`). `"enabled": false` turns per-session profiles off.
+
+### Session Strategies (`session_strategies.asia_range_fade`)
+`enabled`, `mode` (shadow only), `hours_utc`, `exit_hour_utc`, `symbols`, `bb_period`, `bb_dev`, `rsi_low`, `sl_atr`, `sl_floor_pips`, `tp_r`, `promote_after_trades`, `promote_min_avg_r`.
+
+### Other Sections
+`trading` (symbols, `timeframe: "M5"`, bars, order comment), `model_upgrade` (weekly model scan limits), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
+
+---
+
+## 🧪 Testing
+
+**Offline regression suites.** MT5 is mocked and `order_send` is blocked, so they can't touch an account:
+```powershell
+python forex_local_agent/tests/test_session_profiles.py     # session slots, spread cap, loss budgets, daily grading
+python forex_local_agent/tests/test_session_strategies.py   # Asia range-fade signal, paper fills, weekend/stale guard
+python forex_local_agent/tests/test_execution_upgrade.py    # ranked execution, confidence cap, spread cost wall, no-lookahead sim
+python forex_local_agent/tests/test_cycle5_regressions.py   # rules loader, reflexion quarantine, broker time, tier-1 blackout, chatbot
+python forex_local_agent/tests/test_daily_loss_stop.py
+python forex_local_agent/tests/test_chat_logger.py
 ```
 
-### Risk Parameters Reference
-
-| Parameter | Default | Description |
-|---|---|---|
-| `fixed_lot` | `0.01` | Fixed lot size for all trades (micro-lot) |
-| `max_lot_size` | `0.1` | Hard ceiling on calculated lot size |
-| `max_drawdown_pct` | `2.0` | Per-trade cap: rejects a trade whose actual loss at SL (lot × SL distance) exceeds this % of balance. Not an account drawdown limit; see `daily_loss_limit_pct` |
-| `max_open_trades` | `10` | Maximum simultaneous open positions |
-| `confidence_threshold` | `0.80` | Minimum LLM confidence to trigger trade execution |
-| `min_sl_pips` | `15.0` | Minimum Stop Loss distance (pips) — prevents spread noise hits |
-| `max_spread_pips` | `3.5` | Maximum acceptable broker spread before rejection |
-| `symbol_cooldown_minutes` | `30` | Cooldown after a trade closes on a symbol (prevents revenge trading) |
-| `news_blackout_pre_mins` | `30` | Minutes before high-impact news to stop trading |
-| `news_blackout_post_mins` | `15` | Minutes after high-impact news to resume trading |
-| `news_blackout_global_tier1` | `true` | Tier-1 USD releases (NFP, CPI, Fed rate, FOMC) black out all symbols, not only USD pairs |
-| `trailing_breakeven_pips` | `15.0` | Pips in profit before auto-moving SL to breakeven |
-| `trailing_stop_enabled` | `true` | Master switch for the break-even / trailing manager |
-| `trailing_breakeven_lock_pips` | `1.0` | SL is moved to entry + this many pips at break-even |
-| `trailing_start_pips` | `20.0` | Profit (pips) at which trailing starts |
-| `trailing_distance_pips` | `10.0` | Distance of the trailing SL behind price |
-| `trailing_step_pips` | `2.0` | Minimum SL improvement before a trailing modification is sent |
-| `max_currency_exposure` | `3` | Max positions containing any single currency |
-| `session_profiles.<SESSION>` | see config | `max_open_trades`, `loss_budget_pct`, `max_spread_sl_ratio`, `symbols` per session (ASIA, LONDON, LONDON_NY_OVERLAP, NEW_YORK, ROLLOVER) |
-| `session_profiles.grading` | see config | Daily grading thresholds (review window, R thresholds, minimum trades) |
-| `max_spread_sl_ratio` | `0.06` | Spread Cost Wall: max live spread as a fraction of the SL distance |
-| `max_confidence` | `0.89` | Confidence Calibration Cap: LLM confidence above this is rejected |
-| `entry_hours_utc` | `null` | Entry Window Wall: new trades only in `[start, end)` UTC hours; `null` = all sessions |
-| `rank_signals` | `true` | Rank each cycle's signals before execution instead of config order |
-| `daily_loss_limit_pct` | `5.0` | Max cumulative realized loss (% of balance) before halting all new entries for the UTC day |
+**Sandboxed end-to-end cycle.** `test_mock_cycle.py` uses the **live MT5 terminal** for data, with `order_send` patched so nothing reaches the broker:
+```powershell
+python forex_local_agent/tests/test_mock_cycle.py
+```
+It covers MT5 connection, bars and H1 trend, news and calendar, the LLM parse, ATR math, trailing logic, the risk walls and the correlation wall.
 
 ---
 
-## ⚡ 1-Click Desktop Batch Runners
+## ⚡ 1-Click Batch Runners
 
-| Runner | Target | Description |
-|---|---|---|
-| **`run_agent.bat`** | **Forex Trading Loop** | Starts Ollama daemon and runs the 24/7 autonomous trading loop (`main.py`). |
-| **`chat.bat`** | **Market Intelligence Chat** | Interactive CLI chat with `agent-brain:32k` to query 29 pairs and live setups. |
-| **`assistant.bat`** | **Autonomous Coding Agent** | Launches the tool-enabled coding assistant with PowerShell, DB, and MT5 access. |
-| **`stop_all.bat`** | **Emergency Terminator** | Instantly kills all background Ollama, Python agent, and terminal processes. |
+| Runner | What it does |
+|---|---|
+| `run_agent.bat` | Starts Ollama if needed, then runs the trading loop (`main.py`) |
+| `chat.bat` | Interactive market chat with live MT5 scans |
+| `assistant.bat` | Tool-using local assistant |
+| `stop_all.bat` | Stops Ollama and all agent processes |
+
+Keep the `run_agent.bat` window open: **closing it stops the agent.**
 
 ---
 
-## ❓ Troubleshooting & Best Practices
+## ❓ Troubleshooting
 
-#### 1. Terminal says: `⏳ Waiting Xs for next M5 candle close...`
-* **Normal Behavior.** After analyzing all 29 pairs on startup, the bot waits for the next candle close before scanning again, preventing redundant CPU churn.
+| Symptom | Cause / fix |
+|---|---|
+| `Waiting Xs for next M5 candle close...` | Normal. The agent runs one cycle per candle and manages trailing stops while it waits |
+| Many `REJECTED: Session ...` alerts | The session is at `REDUCED` / `MINIMAL` level or has used its loss budget. Check the latest `SESSION_REVIEW` in `logs/agent.log` or the `sessions` section of `execution_quality.py` |
+| `REJECTED: Daily loss limit reached` all day | The 5% daily loss stop has been hit. It resets at 00:00 UTC; open positions keep their SL/TP and trailing |
+| `REJECTED: Spread cost ...` outside liquid hours | Expected: evening and rollover spreads are often 10–20% of a 15-pip SL |
+| `Ollama circuit breaker OPENED` | The Ollama server is down. Start `ollama serve` or free GPU memory; the breaker retries after 60 s |
+| `Symbol XXX not found` | Add the symbol in MT5 Market Watch (`Ctrl+U`) |
+| Agent stopped without an error in the log | The console window was closed; restart with `run_agent.bat` |
+| Daily numbers look shifted by a few hours | Broker server time: check `state/mt5_server_offset.json` (it should match the broker's UTC offset, e.g. 10800 = UTC+3) |
 
-#### 2. VS Code shows unsaved dots (`•`) on tabs:
-* If tabs were open when Git or scripts modified files on disk, do **NOT** click Save (`Ctrl+S`).
-* Press `Ctrl + Shift + P` → type **`Developer: Reload Window`** → press Enter. All tabs will reload cleanly from disk.
-
-#### 3. MT5 says `Symbol [SYMBOL] not found`:
-* In MT5, press `Ctrl + U` (Symbols), find the pair, and double-click it to add it to Market Watch.
-
-#### 4. Ollama circuit breaker activates:
-* If you see `Ollama circuit breaker OPENED`, the local LLM server is down. Start Ollama (`ollama serve`) or check GPU memory.
-* The circuit breaker auto-resets after 60 seconds — no manual intervention needed.
-
-#### 5. Parse failures on specific pairs:
-* The multi-tier parser with synonym normalizer handles 99%+ of LLM output drift.
-* Persistent failures on specific pairs may indicate prompt length issues — check `logs/system_errors.log` for raw response previews.
-
-#### 6. Safely stopping the agent:
-* Press `Ctrl + C` in the running terminal, or double-click `stop_all.bat`.
-
-#### 7. `learned_rules.md` file growing large:
-* **Normal.** The file accumulates auto-generated post-mortem rules over time. Only curated rules (marked with `### [CATEGORY]` headers) are loaded into the LLM prompt. The rest is kept for audit trail only.
+Stop the agent safely with `Ctrl+C` in its window, or with `stop_all.bat`.
 
 ---
 
 ## 📜 License & Disclaimer
-This software is developed for educational, quantitative research, and autonomous algorithmic trading purposes. Forex and CFD trading involve substantial financial risk. Past performance does not guarantee future results. Always test thoroughly on a demo account before risking real capital.
+
+This software is for education and quantitative research. Forex and CFD trading carry substantial risk of loss, and **live results so far have been negative** (see [Project Status](#-project-status)). Past performance does not guarantee future results. Test on a demo account before risking real capital; you are solely responsible for any trades it places.
 
 **© 2026 Bubat AI — Built by [syarief02](https://github.com/syarief02)**
