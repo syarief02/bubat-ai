@@ -36,13 +36,15 @@ except ImportError:  # pragma: no cover
     mt5 = None
 
 try:
-    from core.mt5_time import get_server_utc_offset_seconds
+    from core.mt5_time import get_server_utc_offset_seconds, market_open
     from core.trade_analytics import entry_window_open, pip_size_for
 except ImportError:
-    from forex_local_agent.core.mt5_time import get_server_utc_offset_seconds
+    from forex_local_agent.core.mt5_time import get_server_utc_offset_seconds, market_open
     from forex_local_agent.core.trade_analytics import entry_window_open, pip_size_for
 
 STATE_DIR = Path(__file__).resolve().parent.parent / "state"
+# A signal bar older than this means the feed is stale (weekend, holiday, disconnected terminal)
+MAX_SIGNAL_BAR_AGE_SECONDS = 15 * 60
 
 DEFAULTS = {
     "enabled": True,
@@ -200,7 +202,7 @@ class AsiaRangeFadeShadow:
                 stats["resolved"] += 1
                 logger.info(f"[ASIA-SHADOW] {symbol} paper trade closed: {res['exit_reason']} {res['r']:+.2f}R")
 
-        if entry_window_open(now_utc.hour, self.cfg["hours_utc"]):
+        if market_open(now_utc) and entry_window_open(now_utc.hour, self.cfg["hours_utc"]):
             for symbol in self.cfg["symbols"]:
                 if symbol in self.open_trades:
                     continue
@@ -209,6 +211,8 @@ class AsiaRangeFadeShadow:
                     continue
                 done = b["t"] < now_utc.timestamp() - 300
                 if not done.any() or self.last_signal_bar.get(symbol) == b["t"][done][-1]:
+                    continue
+                if now_utc.timestamp() - b["t"][done][-1] > MAX_SIGNAL_BAR_AGE_SECONDS:
                     continue
                 sig = fade_signal(b["high"][done], b["low"][done], b["close"][done],
                                   self.cfg["bb_period"], self.cfg["bb_dev"], self.cfg["rsi_low"])

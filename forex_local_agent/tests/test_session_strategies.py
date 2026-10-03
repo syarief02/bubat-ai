@@ -146,6 +146,18 @@ class TestShadowRunner(unittest.TestCase):
             st = ss.AsiaRangeFadeShadow({}, Path(d)).run_cycle(now)
         self.assertEqual(st["opened"], 0)
 
+    def test_no_trades_on_weekend_or_stale_feed(self):
+        _, _, c = _wave()
+        c[-5:-1] = [1.0990, 1.0980, 1.0970, 1.0960]
+        saturday = datetime(2026, 10, 3, 2, 7, tzinfo=timezone.utc)
+        monday = datetime(2026, 10, 5, 2, 7, tzinfo=timezone.utc)
+        for now, t0 in ((saturday, int(saturday.timestamp()) - 300 * (len(c) - 1) - 120),
+                        (monday, int(monday.timestamp()) - 300 * (len(c) - 1) - 3600)):  # bars 1h old
+            fake = self._fake_mt5(list(c), t0)
+            with tempfile.TemporaryDirectory() as d, patch.object(ss, "mt5", fake),                     patch.object(ss, "get_server_utc_offset_seconds", return_value=0):
+                st = ss.AsiaRangeFadeShadow({}, Path(d)).run_cycle(now)
+            self.assertEqual(st["opened"], 0, now)
+
     def test_live_mode_is_forced_to_shadow(self):
         with tempfile.TemporaryDirectory() as d:
             r = ss.AsiaRangeFadeShadow({"session_strategies": {"asia_range_fade": {"mode": "live"}}}, Path(d))
