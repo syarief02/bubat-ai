@@ -411,3 +411,30 @@ This window overlaps cycle #4's real window by ~20h, so findings seen in both ar
 - 2 post-restart cycles: 0 errors / parse failures; ranking active (XAUUSD 4.2% spread/SL ranked
   first); all signals rejected by SESSION_WINDOW at 18h UTC as designed. Evening spreads were 10-19%
   of SL even on majors, so SPREAD_COST will also bind outside liquid hours.
+
+## [2026-10-03T01:15Z] Session-specific execution: Asia range-fade (shadow)
+
+### RESEARCH (155 days M5, 29 symbols, entry next bar open, SL wins ties, exit 07:00 UTC, IS/OOS 60/40)
+- All 36 Asia variants (BB/RSI fade, H1 trend pullback) lose on the full symbol list.
+- Fixed 5-major universe (EURUSD GBPUSD AUDUSD USDCAD USDJPY): fade BB(20,2.0) RSI<30/>70, 1R TP
+  +0.052R OOS (n=439) with ZERO cost. MT5 bar spread field is 0 on these symbols, so cost was not
+  in the first run. With 0.3 / 0.5 / 1.0 pip per trade: -0.039 / -0.100 / -0.253R (median SL 3.4p);
+  with an 8-pip SL floor: -0.004 / -0.028 / -0.088R. [HYPOTHESIS] no edge after realistic costs.
+- Real Asia tick spreads on those majors: 0.0-0.1 pip (London similar); crosses 0.4-1.8 pip.
+
+### CHANGES
+- f9bc09f feat(sessions): core/session_strategies.py, Asia range-fade on 5 majors 00-06 UTC,
+  SL max(1.5xATR, 8p), TP 1R, exit 07:00 UTC. SHADOW ONLY: paper trades at live bid/ask, resolved
+  on M5 bars, state/asia_shadow_trades.jsonl; "live" coerced to shadow. Promotion bar: 100 trades,
+  avg >= +0.05R, then owner approval.
+- 437b8dd test: ranked-cycle test no longer writes AAA/BBB lines into live logs/agent.log.
+- 5059d1d fix(sessions): no paper trades on weekends or with a signal bar older than 15 min.
+
+### VERIFICATION
+- test_session_strategies 15/15, test_execution_upgrade 12/12, test_cycle5_regressions 31/31,
+  daily-loss OK, compileall OK.
+- Agent was found stopped (last cycle 00:56 UTC, no error or shutdown logged). Relaunched 01:13 UTC
+  via run_agent.bat; first cycle: 0 errors, asia_shadow {opened 0} (market closed).
+
+### WATCHLIST
+- execution_quality.py -> asia_shadow_all_time: trades, avg R, promotion_ready.
