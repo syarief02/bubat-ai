@@ -289,6 +289,7 @@ flowchart LR
     G -- pass --> I["Applied; judged later against its before-numbers"]
 ```
 
+* **Its own reasoning model:** `gpt-oss:20b` (free, open weights) with `think: "high"`, run on the **CPU only** (`num_gpu: 0`) while the market is open, so the 14 GB model never pushes the trading model out of the 8 GB GPU. A run takes about 30–40 minutes. While the market is closed (Friday 21:00 to Sunday 21:00 UTC), `gpu_when_market_closed: true` lets it use the GPU as well, which is about 3x faster. This is decided for each call. It was chosen with `maintenance/brain_benchmark.py`, which scores a data-reading quiz with code-computed answers, a small-sample trap, and proposal validity. It was the only model to score 5/5 on the quiz, beating `qwen3:8b`, `qwen3:30b` and `gpt-oss:20b` at medium reasoning.
 * **It never changes anything by itself.** Each proposal waits in `state/brain/inbox.md` until the owner runs `brain.bat approve <id>` or `brain.bat reject <id>`. Config changes take effect when the agent restarts.
 * **Code, not the LLM, decides what is allowed.** Only a fixed list of risk settings can be tuned, each within hard bounds: confidence threshold, open-trade slots, spread caps, cooldown, news blackout, currency exposure, and per-session slots and loss budgets. Code labels each change SAFER or RISKIER. Lot size, SL/TP, the daily loss limit, auto-approve and adding symbols are never tunable.
 * **No acting on noise.** Config, symbol and rule changes are refused when they rest on fewer than 30 trades.
@@ -490,7 +491,7 @@ One block per session (`ASIA`, `LONDON`, `LONDON_NY_OVERLAP`, `NEW_YORK`, `ROLLO
 `enabled`, `mode` (shadow only), `hours_utc`, `exit_hour_utc`, `symbols`, `bb_period`, `bb_dev`, `rsi_low`, `sl_atr`, `sl_floor_pips`, `tp_r`, `promote_after_trades`, `promote_min_avg_r`.
 
 ### Other Sections
-`trading` (symbols, `timeframe: "M5"`, bars, order comment), `active_model` and `ollama_think` (the model used by the agent, chat and assistant; `false` skips qwen3's hidden reasoning), `model_upgrade` (weekly model scan; off unless `enabled: true`, since it swaps in any model passing a trivial audition), `brain` (`enabled`, `daily_run_utc`, `report_hours` window, `think`, research/proposal limits), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
+`trading` (symbols, `timeframe: "M5"`, bars, order comment), `active_model` and `ollama_think` (the model used by the agent, chat and assistant; `false` skips qwen3's hidden reasoning), `model_upgrade` (weekly model scan; off unless `enabled: true`, since it swaps in any model passing a trivial audition), `brain` (`enabled`, `daily_run_utc`, `report_hours` window, `model`, `think` (true/false or low/medium/high), `num_predict`, `num_ctx`, `num_gpu` (0 = CPU only), `gpu_when_market_closed`, research/proposal limits), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
 
 ---
 

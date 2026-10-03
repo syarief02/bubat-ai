@@ -265,6 +265,38 @@ class TestBrainRun(TempStoreCase):
             self.assertLess(len(text), 9000)
 
 
+class TestGpuPlacement(unittest.TestCase):
+    def test_gpu_only_while_market_closed(self):
+        from brain.llm import BrainLLM
+        llm = BrainLLM({"brain": {"model": "m", "num_gpu": 0, "gpu_when_market_closed": True}})
+        saturday = datetime(2026, 10, 3, 21, 15, tzinfo=timezone.utc)
+        friday_after_close = datetime(2026, 10, 2, 21, 15, tzinfo=timezone.utc)
+        sunday_after_open = datetime(2026, 10, 4, 21, 15, tzinfo=timezone.utc)
+        tuesday = datetime(2026, 10, 6, 21, 15, tzinfo=timezone.utc)
+        self.assertIsNone(llm.gpu_layers(saturday))            # None = Ollama may use the GPU
+        self.assertIsNone(llm.gpu_layers(friday_after_close))
+        self.assertEqual(llm.gpu_layers(sunday_after_open), 0)  # trading resumed: CPU only
+        self.assertEqual(llm.gpu_layers(tuesday), 0)
+        cpu_always = BrainLLM({"brain": {"model": "m", "num_gpu": 0}})
+        self.assertEqual(cpu_always.gpu_layers(saturday), 0)
+
+    def test_payload_omits_num_gpu_when_closed(self):
+        from brain import llm as llm_mod
+        llm = llm_mod.BrainLLM({"brain": {"model": "m", "num_gpu": 0, "gpu_when_market_closed": True}})
+        sent = {}
+
+        def fake_post(url, json=None, timeout=None):
+            sent.update(json)
+            return MagicMock(json=lambda: {"response": "{}", "done_reason": "stop"}, raise_for_status=lambda: None)
+
+        with patch.object(llm_mod.httpx, "post", fake_post), patch.object(llm, "gpu_layers", return_value=None):
+            llm.ask_json("s", "p")
+        self.assertNotIn("num_gpu", sent["options"])
+        with patch.object(llm_mod.httpx, "post", fake_post), patch.object(llm, "gpu_layers", return_value=0):
+            llm.ask_json("s", "p")
+        self.assertEqual(sent["options"]["num_gpu"], 0)
+
+
 class TestWebParse(unittest.TestCase):
     def test_duckduckgo_ads_skipped_and_urls_kept(self):
         from core.web_surfer import parse_duckduckgo_html
