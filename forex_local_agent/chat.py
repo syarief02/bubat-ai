@@ -261,11 +261,21 @@ When you receive the tool result, synthesize the findings into a clear, structur
         print(f"\n{MAGENTA}{BOLD}▶ [DEEP REASONING]{RESET} {DIM}{self.deep_llm.model} on {where}, {eta}...{RESET}")
         data = cs.deep_context()
         symbols = [s for s in self.executor.scanner.symbols if s.lower() in user_prompt.lower()][:2]
+        setup = cs.wants_setup(user_prompt)
+        if setup and not symbols:
+            # No pair named: scan live MT5 and look closer at the top-ranked pairs
+            print(f"  {DIM}scanning live MT5 pairs...{RESET}")
+            scan = self.executor.scanner.scan_and_rank()
+            if scan.get("status") == "success":
+                data["market_scan_top"] = scan["rankings"][:5]
+                symbols = [r["symbol"] for r in scan["rankings"][:2]]
+            else:
+                data["market_scan_top"] = f"unavailable: {scan.get('message')}"
         for sym in symbols:
             data.setdefault("live_technicals", {})[sym] = self.executor._tool_get_pair_technicals({"symbol": sym})[:1500]
         if any(k in user_prompt.lower() for k in ("account", "balance", "equity", "position", "baki", "akaun")):
             data["account_now"] = self.executor._tool_get_account_status({})
-        if cs.wants_news(user_prompt):
+        if setup or cs.wants_news(user_prompt):
             print(f"  {DIM}fetching the latest headlines...{RESET}")
             data["news_untrusted"] = cs.news_context(self.executor.surfer, symbols)
         messages = [{"role": "system", "content": cs.DEEP_SYSTEM.format(language=language)}]

@@ -13,7 +13,7 @@ echo.
 netstat -ano | findstr 11434 | findstr LISTENING >nul
 if %errorlevel% neq 0 (
     echo [*] Starting background Ollama server...
-    start "" /B "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve >nul 2>&1
+    powershell -NoProfile -Command "Start-Process -FilePath ($env:LOCALAPPDATA + '\Programs\Ollama\ollama.exe') -ArgumentList serve -WindowStyle Hidden"
     timeout /t 5 /nobreak >nul
 )
 

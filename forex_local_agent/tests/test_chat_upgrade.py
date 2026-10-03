@@ -46,6 +46,13 @@ class TestHelpers(unittest.TestCase):
         self.assertTrue(cs.wants_deep("kenapa USDJPY teruk"))
         self.assertFalse(cs.wants_deep("show me the EURUSD rsi"))
 
+    def test_setup_requests_get_live_data(self):
+        self.assertTrue(cs.wants_setup("analyze the market chart and online analysis, then give me entry price, tp, and sl."))
+        self.assertTrue(cs.wants_setup("give me a stop loss for gold"))
+        self.assertTrue(cs.wants_deep("EURUSD entry?"))
+        self.assertFalse(cs.wants_setup("is the slot free? see http://x"))
+        self.assertFalse(cs.wants_setup("how much did the bot lose this week"))
+
     def test_parse_decision(self):
         self.assertEqual(cs.parse_decision("approve P5"), ("approve", "P5", ""))
         self.assertEqual(cs.parse_decision("reject p3 not enough evidence"), ("reject", "P3", "not enough evidence"))
