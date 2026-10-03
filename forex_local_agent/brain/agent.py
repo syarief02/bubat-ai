@@ -132,7 +132,8 @@ class Brain:
 
         assessment = str(reply.get("assessment", ""))[:1000]
         lessons = [str(x)[:300] for x in reply.get("lessons", []) if x][:5]
-        self.journal.add("reflection", assessment=assessment, lessons=lessons)
+        self.journal.add("reflection", assessment=assessment, lessons=lessons,
+                         llm=dict(getattr(self.llm, "last_stats", {}) or {}))
 
         added, refused = [], []
         for raw in (reply.get("proposals") or [])[: self.cfg.get("max_proposals", 3)]:

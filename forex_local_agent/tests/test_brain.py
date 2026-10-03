@@ -283,6 +283,7 @@ class TestGpuPlacement(unittest.TestCase):
     def test_payload_omits_num_gpu_when_closed(self):
         from brain import llm as llm_mod
         llm = llm_mod.BrainLLM({"brain": {"model": "m", "num_gpu": 0, "gpu_when_market_closed": True}})
+        llm._match_placement = lambda num_gpu: None
         sent = {}
 
         def fake_post(url, json=None, timeout=None):
@@ -295,6 +296,84 @@ class TestGpuPlacement(unittest.TestCase):
         with patch.object(llm_mod.httpx, "post", fake_post), patch.object(llm, "gpu_layers", return_value=0):
             llm.ask_json("s", "p")
         self.assertEqual(sent["options"]["num_gpu"], 0)
+
+
+class TestThinkFallback(unittest.TestCase):
+    def _llm(self, replies):
+        from brain import llm as llm_mod
+        llm = llm_mod.BrainLLM({"brain": {"model": "m", "think": "high", "think_fallback": ["medium"]}})
+        llm._match_placement = lambda num_gpu: None
+        calls = []
+
+        def fake_post(url, json=None, timeout=None):
+            calls.append(json["think"])
+            body = replies[len(calls) - 1]
+            return MagicMock(json=lambda: body, raise_for_status=lambda: None)
+        return llm, llm_mod, calls, fake_post
+
+    def test_cut_off_high_retries_at_medium(self):
+        # 2026-10-04: high reasoning thought for 16,000 tokens and never answered
+        llm, mod, calls, post = self._llm([{"response": "", "done_reason": "length", "eval_count": 16000},
+                                           {"response": '{"assessment": "ok"}', "done_reason": "stop"}])
+        with patch.object(mod.httpx, "post", post):
+            self.assertEqual(llm.ask_json("s", "p"), {"assessment": "ok"})
+        self.assertEqual(calls, ["high", "medium"])
+        self.assertEqual(llm.last_stats["think_used"], "medium")
+
+    def test_good_high_answer_is_used(self):
+        llm, mod, calls, post = self._llm([{"response": '{"a": 1}', "done_reason": "stop"}])
+        with patch.object(mod.httpx, "post", post):
+            self.assertEqual(llm.ask_json("s", "p"), {"a": 1})
+        self.assertEqual(calls, ["high"])
+
+    def test_all_levels_fail(self):
+        llm, mod, calls, post = self._llm([{"response": "", "done_reason": "length"},
+                                           {"response": "not json", "done_reason": "stop"}])
+        with patch.object(mod.httpx, "post", post):
+            self.assertIsNone(llm.ask_json("s", "p"))
+        self.assertEqual(calls, ["high", "medium"])
+
+    def test_ollama_down_does_not_retry(self):
+        from brain import llm as mod
+        llm = mod.BrainLLM({"brain": {"model": "m", "think": "high", "think_fallback": ["medium"]}})
+        llm._match_placement = lambda num_gpu: None
+        with patch.object(mod.httpx, "post", side_effect=ConnectionError("down")) as post:
+            self.assertIsNone(llm.ask_json("s", "p"))
+        self.assertEqual(post.call_count, 1)
+
+
+class TestPlacementReload(unittest.TestCase):
+    """A CPU-only copy left loaded from a weekday run kept a weekend run on the CPU (2026-10-04)."""
+
+    def _run(self, size_vram, num_gpu):
+        from brain import llm as mod
+        llm = mod.BrainLLM({"brain": {"model": "gpt-oss:20b"}})
+        state = {"loaded": size_vram is not None}
+        posts = []
+
+        def fake_get(url, timeout=None):
+            models = [{"name": "gpt-oss:20b", "size_vram": size_vram}] if state["loaded"] else []
+            return MagicMock(json=lambda: {"models": models})
+
+        def fake_post(url, json=None, timeout=None):
+            posts.append(json)
+            state["loaded"] = False
+            return MagicMock()
+
+        with patch.object(mod.httpx, "get", fake_get), patch.object(mod.httpx, "post", fake_post):
+            llm._match_placement(num_gpu)
+        return posts
+
+    def test_cpu_copy_unloaded_for_gpu_call(self):
+        self.assertEqual(self._run(size_vram=0, num_gpu=None), [{"model": "gpt-oss:20b", "keep_alive": 0}])
+
+    def test_gpu_copy_unloaded_for_cpu_call(self):
+        self.assertEqual(len(self._run(size_vram=6_000_000_000, num_gpu=0)), 1)
+
+    def test_matching_or_absent_copy_left_alone(self):
+        self.assertEqual(self._run(size_vram=0, num_gpu=0), [])
+        self.assertEqual(self._run(size_vram=6_000_000_000, num_gpu=None), [])
+        self.assertEqual(self._run(size_vram=None, num_gpu=None), [])
 
 
 class TestWebParse(unittest.TestCase):
