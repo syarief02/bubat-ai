@@ -530,6 +530,18 @@ def print_banner(agent: IntelligentForexChat):
     print("=" * 72)
     print(f"  Live Market Session: {GREEN}{BOLD}{session.get('session_summary')}{RESET}")
     print(f"  Active UTC Time:     {DIM}{session.get('utc_time')}{RESET}")
+    health = cs.health_status()
+    if health:
+        colour = {"OK": GREEN, "WARN": YELLOW, "FAULT": RED}.get(health["status"], YELLOW)
+        print(f"  Bot Health:          {colour}{BOLD}{health['status']}{RESET} {DIM}(checked {health['age_hours']}h ago){RESET}")
+        for c in health["checks"]:
+            if c["status"] != "OK":
+                c_colour = RED if c["status"] == "FAULT" else YELLOW
+                print(f"    {c_colour}{c['status']}{RESET} {c['name']}: {c['detail'][:110]}")
+        if health["age_hours"] > 26:
+            print(f"    {YELLOW}Old result: run health_check.bat for a fresh one{RESET}")
+    else:
+        print(f"  Bot Health:          {DIM}not checked yet (run health_check.bat){RESET}")
     print("-" * 72)
     print("  Capabilities:")
     print(f"   • {GREEN}Live MT5 Multi-Pair Scanner{RESET} -> Ranks EURUSD, GBPUSD, USDJPY, Gold, etc.")

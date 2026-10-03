@@ -133,6 +133,26 @@ def describe(p: Dict[str, Any]) -> str:
     return _describe(p)
 
 
+def health_status() -> Optional[Dict[str, Any]]:
+    """Latest maintenance/health_check.py result plus its age in hours, or None if it never ran."""
+    try:
+        result = json.loads((AGENT_DIR / "state" / "health" / "latest.json").read_text(encoding="utf-8"))
+        checked = datetime.fromisoformat(result["checked_at"])
+        result["age_hours"] = round((datetime.now(timezone.utc) - checked).total_seconds() / 3600, 1)
+        return result
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def health_brief() -> str:
+    """One line for prompts: the overall status and any WARN/FAULT details."""
+    h = health_status()
+    if not h:
+        return "Health check: never run."
+    problems = [f"{c['status']} {c['name']}: {c['detail']}" for c in h["checks"] if c["status"] != "OK"]
+    return f"Health check ({h['age_hours']}h ago): {h['status']}" + (". " + " | ".join(problems) if problems else "")
+
+
 def status_brief() -> str:
     """A few lines for the fast chat model's system prompt: current results, brain view, open proposals."""
     lines = []
@@ -149,6 +169,7 @@ def status_brief() -> str:
                          f"LLM signals avg R {b['llm_all_buy_sell']['avg_r']}.")
     else:
         lines.append("No daily report saved yet.")
+    lines.append(health_brief())
     last = _journal(("reflection",), 1)
     if last:
         lines.append(f"Brain's latest assessment ({last[-1]['ts'][:10]}): {last[-1].get('assessment', '')[:400]}")
@@ -179,6 +200,7 @@ def deep_context() -> Dict[str, Any]:
         "decided": [{"id": p["id"], "change": describe(p), "status": p.get("status")}
                     for p in items if p.get("status") in ("applied", "rejected", "rolled_back")][-4:],
     }
+    ctx["health_check"] = health_brief()
     ctx["brain_memory"] = [
         {"date": e["ts"][:10], "kind": e["kind"], "text": (e.get("assessment") or e.get("finding") or "")[:300]}
         for e in _journal(("reflection", "research"), 3)

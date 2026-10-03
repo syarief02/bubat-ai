@@ -332,6 +332,19 @@ Breaks down where R is lost between signal and result:
 
 Both scripts are read-only and save JSON to `forex_local_agent/reports/` (gitignored).
 
+### Health Check (is the bot working?)
+`health_check.bat` (or `python forex_local_agent/maintenance/health_check.py --hours 24`) checks whether the bot **works**, not whether it is profitable. Each check reports OK, WARN or FAULT:
+- **agent:** the trading agent is running, and not silent while the market is open;
+- **activity:** pairs were analysed while the market was open, with no gaps over 30 min, and nothing ran while it was closed;
+- **errors:** ERROR lines in `system_errors.log` (failed orders count most);
+- **ollama:** the server answers and the trading model is installed;
+- **mt5:** the terminal is connected and Algo Trading is on;
+- **positions:** every open bot position has SL and TP, lots are within limits, and no more trades are open than allowed;
+- **loss_wall:** no trade was opened after the day's loss passed `daily_loss_limit_pct`;
+- **brain:** the brain ran recently. **disk:** free space.
+
+Windows Task Scheduler runs it daily at 08:00 and 20:00 (task "Bubat AI Health Check"). The window closes by itself when everything is OK and stays open on WARN/FAULT. The chat shows the latest result when it starts, and the result is also saved in `state/health/latest.json` and `logs/health.log`. Exit code: 0 OK, 1 WARN, 2 FAULT.
+
 ---
 
 ## 📁 Project Structure
@@ -344,6 +357,7 @@ bubat AI/
 ├── assistant.bat                      # Local tool-using assistant
 ├── stop_all.bat                       # Stop Ollama + all agent processes
 ├── brain.bat                          # Brain inbox; approve / reject proposals
+├── health_check.bat                   # Is the bot working? (scheduled 08:00 and 20:00)
 ├── local_assistant.py                 # Launcher shim -> forex_local_agent/local_assistant.py
 ├── .env                               # Secrets (gitignored)
 └── forex_local_agent/
@@ -384,6 +398,7 @@ bubat AI/
     ├── maintenance/
     │   ├── daily_report.py            # 24h post-mortem metrics, counterfactuals, baselines
     │   ├── execution_quality.py       # Entry timing, management, spread, per-session breakdown
+    │   ├── health_check.py            # OK / WARN / FAULT checks that the bot works
     │   └── model_updater.py           # Weekly model discovery & hot-swap
     ├── tests/                         # Offline regression suites + sandboxed mock cycle
     ├── logs/                          # agent.log, trades.log, system_errors.log, chat_sessions.log (gitignored)
