@@ -143,7 +143,9 @@ class TestRankedCycle(unittest.TestCase):
 
     def _agent(self):
         from unittest.mock import AsyncMock
+        from loguru import logger
         import main as main_mod
+        logger.remove()  # main adds the live agent/trade log sinks at import; keep test output out of them
         a = object.__new__(main_mod.ForexAgent)
         a.config = {"risk_parameters": {"auto_approve": True}, "alerts": {}, "memory": {}}
         a.timeframe, a.confidence_threshold, a.rank_signals = "M5", 0.80, True
