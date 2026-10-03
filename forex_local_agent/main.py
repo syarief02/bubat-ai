@@ -11,6 +11,7 @@ Coordinates the complete operational cycle:
 import asyncio
 import json
 import signal
+import subprocess
 import sys
 import threading
 import schedule
@@ -629,6 +630,35 @@ class ForexAgent:
 
         return self.running
 
+    def maybe_launch_brain(self, now_utc: Optional[datetime] = None) -> bool:
+        """Once per UTC day after brain.daily_run_utc, start the brain as its own process.
+
+        It runs separately so a long research/reflection pass never delays a trading cycle;
+        it skips itself if it already ran today (e.g. after an agent restart).
+        """
+        cfg = self.config.get("brain", {})
+        if not cfg.get("enabled", False):
+            return False
+        now_utc = now_utc or datetime.now(timezone.utc)
+        today = now_utc.date().isoformat()
+        if getattr(self, "_brain_launched_date", None) == today:
+            return False
+        hh, mm = (int(x) for x in str(cfg.get("daily_run_utc", "21:15")).split(":"))
+        if (now_utc.hour, now_utc.minute) < (hh, mm):
+            return False
+        self._brain_launched_date = today
+        try:
+            agent_dir = Path(__file__).resolve().parent
+            log = open(agent_dir / "logs" / "brain.log", "a", encoding="utf-8")
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.Popen([sys.executable, "-m", "brain", "run"], cwd=agent_dir, stdout=log,
+                             stderr=subprocess.STDOUT, creationflags=flags)
+            logger.info("🧠 Daily brain run started (logs/brain.log, results: python -m brain status).")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not start the brain: {e}")
+            return False
+
     def market_closed_wait(self, now_utc: Optional[datetime] = None) -> Optional[float]:
         """Seconds to sleep before re-checking if the FX market is closed, else None.
 
@@ -684,6 +714,7 @@ class ForexAgent:
                 while self.running:
                     # Run any scheduled tasks (e.g., weekly model check)
                     schedule.run_pending()
+                    self.maybe_launch_brain()
 
                     closed_wait = self.market_closed_wait()
                     if closed_wait is not None:

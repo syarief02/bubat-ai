@@ -106,6 +106,16 @@
     "architecture_filter": "coder",
     "max_response_latency_seconds": 60
   },
+  "brain": {
+    "enabled": true,
+    "daily_run_utc": "21:15",
+    "report_hours": 120,
+    "think": true,
+    "num_predict": 3072,
+    "timeout_seconds": 600,
+    "max_questions": 2,
+    "max_proposals": 3
+  },
   "alerts": {
     "admin_email_note": "ADMIN_EMAIL loaded from .env",
     "whatsapp_enabled": true

@@ -272,6 +272,30 @@ flowchart LR
 * **Owner approval required** for anything that adds risk: bigger lots, more open trades, a lower confidence threshold, a smaller SL floor, a loosened wall, new symbols, or account / broker changes.
 * **Audit trail:** `forex_local_agent/logs/code_evolution.log` (public, so it contains no account details) records every cycle's metrics, findings, commits and watch-list.
 
+### Bubat Brain: daily research and gated proposals (`brain/`)
+
+Once a day (default 21:15 UTC, and on weekends), the trading loop starts the brain as a separate process so it never delays a trading cycle:
+
+```mermaid
+flowchart LR
+    A["Observe: 5-day report digest"] --> B["Reflect: qwen3 with thinking on, plus its journal and past proposals"]
+    B --> C["Research: web search, pages summarised as untrusted text"]
+    B --> D["Propose: config / remove symbol / rule / idea"]
+    D --> E{"Code checks: whitelisted key, bounds, 30-trade minimum"}
+    E -- refused --> J["Journal"]
+    E -- ok --> F["Inbox: waits for the owner"]
+    F -- "brain.bat approve P3" --> G["Apply, run 7 test suites"]
+    G -- fail --> H["Roll back"]
+    G -- pass --> I["Applied; judged later against its before-numbers"]
+```
+
+* **It never changes anything by itself.** Each proposal waits in `state/brain/inbox.md` until the owner runs `brain.bat approve <id>` or `brain.bat reject <id>`. Config changes take effect when the agent restarts.
+* **Code, not the LLM, decides what is allowed.** Only a fixed list of risk settings can be tuned, each within hard bounds: confidence threshold, open-trade slots, spread caps, cooldown, news blackout, currency exposure, and per-session slots and loss budgets. Code labels each change SAFER or RISKIER. Lot size, SL/TP, the daily loss limit, auto-approve and adding symbols are never tunable.
+* **No acting on noise.** Config, symbol and rule changes are refused when they rest on fewer than 30 trades.
+* **It learns over time.** Every observation, reflection, research finding and owner decision goes to `state/brain/journal.jsonl`. The next reflection reads its recent memory, the open proposals, the rejected ones, and the applied ones with their before-numbers.
+* **Web content is data, never instructions.** Search results are summarised with an "untrusted content" prompt. Sources are the URLs actually fetched, not what the model claims.
+* `idea` proposals are code or strategy changes for the owner (or a coding agent) to implement. The brain cannot edit code.
+
 ### Reports
 ```powershell
 python forex_local_agent/maintenance/daily_report.py --hours 24
@@ -308,6 +332,7 @@ bubat AI/
 ├── chat.bat                           # Market intelligence chat
 ├── assistant.bat                      # Local tool-using assistant
 ├── stop_all.bat                       # Stop Ollama + all agent processes
+├── brain.bat                          # Brain inbox; approve / reject proposals
 ├── local_assistant.py                 # Launcher shim -> forex_local_agent/local_assistant.py
 ├── .env                               # Secrets (gitignored)
 └── forex_local_agent/
@@ -330,6 +355,10 @@ bubat AI/
     │   ├── web_surfer.py              # Fast live news / web fetcher
     │   ├── openclaw_bridge.py         # WhatsApp approvals, alerts, webhook :5055
     │   └── supabase_manager.py        # Supabase telemetry
+    ├── brain/                         # Daily research + gated proposals (python -m brain)
+    │   ├── agent.py                   # observe -> reflect -> research -> propose
+    │   ├── proposals.py               # Whitelist, bounds, risk labels, apply + gates + rollback
+    │   ├── digest.py / journal.py / llm.py
     ├── learning/
     │   ├── rules_loader.py            # Curated, capped rule injection
     │   ├── reflexion_store.py         # Reflexion validator + quarantine + processed tickets
@@ -349,7 +378,7 @@ bubat AI/
     ├── logs/                          # agent.log, trades.log, system_errors.log, chat_sessions.log (gitignored)
     │   └── code_evolution.log         # Public audit trail of every improvement cycle
     ├── state/                         # Runtime state (gitignored): server offset, processed tickets,
-    │                                  #   session levels, Asia shadow trades
+    │                                  #   session levels, Asia shadow trades, brain journal/proposals/inbox
     └── reports/                       # Report JSON output (gitignored)
 ```
 
@@ -461,7 +490,7 @@ One block per session (`ASIA`, `LONDON`, `LONDON_NY_OVERLAP`, `NEW_YORK`, `ROLLO
 `enabled`, `mode` (shadow only), `hours_utc`, `exit_hour_utc`, `symbols`, `bb_period`, `bb_dev`, `rsi_low`, `sl_atr`, `sl_floor_pips`, `tp_r`, `promote_after_trades`, `promote_min_avg_r`.
 
 ### Other Sections
-`trading` (symbols, `timeframe: "M5"`, bars, order comment), `active_model` and `ollama_think` (the model used by the agent, chat and assistant; `false` skips qwen3's hidden reasoning), `model_upgrade` (weekly model scan; off unless `enabled: true`, since it swaps in any model passing a trivial audition), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
+`trading` (symbols, `timeframe: "M5"`, bars, order comment), `active_model` and `ollama_think` (the model used by the agent, chat and assistant; `false` skips qwen3's hidden reasoning), `model_upgrade` (weekly model scan; off unless `enabled: true`, since it swaps in any model passing a trivial audition), `brain` (`enabled`, `daily_run_utc`, `report_hours` window, `think`, research/proposal limits), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
 
 ---
 
@@ -475,6 +504,8 @@ python forex_local_agent/tests/test_execution_upgrade.py    # ranked execution, 
 python forex_local_agent/tests/test_cycle5_regressions.py   # rules loader, reflexion quarantine, broker time, tier-1 blackout, chatbot
 python forex_local_agent/tests/test_daily_loss_stop.py
 python forex_local_agent/tests/test_chat_logger.py
+python forex_local_agent/tests/test_market_hours.py       # pause while the FX market is closed
+python forex_local_agent/tests/test_brain.py              # brain validation, gates/rollback, cycle, web parsing
 ```
 
 **Sandboxed end-to-end cycle.** `test_mock_cycle.py` uses the **live MT5 terminal** for data, with `order_send` patched so nothing reaches the broker:
@@ -492,6 +523,7 @@ It covers MT5 connection, bars and H1 trend, news and calendar, the LLM parse, A
 | `run_agent.bat` | Starts Ollama if needed, then runs the trading loop (`main.py`) |
 | `chat.bat` | Interactive market chat with live MT5 scans |
 | `assistant.bat` | Tool-using local assistant |
+| `brain.bat` | Shows the brain's latest assessment and proposals; `brain.bat approve P3`, `brain.bat reject P3 reason`, `brain.bat run --force` |
 | `stop_all.bat` | Stops Ollama and all agent processes |
 
 Keep the `run_agent.bat` window open: **closing it stops the agent.**

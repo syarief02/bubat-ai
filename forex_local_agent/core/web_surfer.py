@@ -14,6 +14,30 @@ from typing import Dict, Any, List, Optional
 from loguru import logger
 
 
+def parse_duckduckgo_html(html: str, query: str, max_results: int) -> List[Dict[str, str]]:
+    """Organic DuckDuckGo results (ads skipped) as {title, url, snippet, query}."""
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    for div in soup.select("div.result"):
+        if "result--ad" in (div.get("class") or []):
+            continue
+        link = div.select_one("a.result__a")
+        snippet = div.select_one(".result__snippet")
+        if not link or not snippet:
+            continue
+        url = link.get("href", "")
+        # Older markup wraps the target in a redirect: //duckduckgo.com/l/?uddg=<encoded url>
+        if "duckduckgo.com/l/" in url:
+            url = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("uddg", [""])[0]
+        if url.startswith("//"):
+            url = "https:" + url
+        results.append({"title": link.get_text(strip=True), "url": url,
+                        "snippet": snippet.get_text(strip=True), "query": query})
+        if len(results) >= max_results:
+            break
+    return results
+
+
 class WebSurfer:
     """Multi-source live web search and market session engine."""
 
@@ -117,17 +141,7 @@ class WebSurfer:
             url = "https://html.duckduckgo.com/html/"
             resp = httpx.post(url, data={"q": query}, headers=self.headers, timeout=6.0)
             if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                snippets = soup.find_all("a", class_="result__snippet")
-                titles = soup.find_all("a", class_="result__url")
-
-                results = []
-                for s in snippets[:max_results]:
-                    text = s.get_text(strip=True)
-                    results.append({
-                        "snippet": text,
-                        "query": query
-                    })
+                results = parse_duckduckgo_html(resp.text, query, max_results)
                 if results:
                     return results
         except Exception as e:

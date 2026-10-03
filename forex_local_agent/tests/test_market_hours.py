@@ -53,6 +53,7 @@ class TestMainLoopPause(unittest.TestCase):
         logger.remove()  # main adds the live agent/trade log sinks at import; keep test output out of them
         a = object.__new__(main_mod.ForexAgent)
         a.running, a.timeframe, a.symbols, a.cycle_stats = True, "M5", ["EURUSD"], {}
+        a.config = {"brain": {"enabled": False}}
         a.mt5_engine = MagicMock()
         a.mt5_engine.initialize.return_value = True
         a.mt5_engine.get_account_info.return_value = {}

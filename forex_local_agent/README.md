@@ -31,6 +31,7 @@ This page covers working *inside* the package: what each module does, where runt
 | `core/sentiment_engine.py`, `core/web_surfer.py` | Live news: SearXNG probe, RSS fallback, concurrent article fetch |
 | `core/openclaw_bridge.py` | WhatsApp proposals and alerts, approval webhook on `:5055` |
 | `core/supabase_manager.py` | Decisions, executions, rules and telemetry to Supabase |
+| `brain/` | Daily self-improvement agent: report digest → reflection → web research → gated proposals. `python -m brain status/run/list/approve/reject/journal` |
 | `learning/rules_loader.py` | Curated rule selection for prompts (2,500-char cap for trading) |
 | `learning/reflexion_store.py` | Loss-reflexion validation, quarantine, persisted processed tickets |
 | `learning/continuous_learner.py`, `memory_manager.py`, `skill_factory.py` | Instruction capture, ChromaDB episodic memory, skill generation |
@@ -57,6 +58,8 @@ This page covers working *inside* the package: what each module does, where runt
 | `state/asia_shadow_open.json`, `state/asia_shadow_trades.jsonl` | Asia paper trades (open / resolved) | No |
 | `learning/reflexion_candidates.jsonl` | Quarantined reflexion rules (never injected) | No |
 | `reports/` | JSON from `daily_report.py` and `execution_quality.py` | No |
+| `state/brain/` | Brain `journal.jsonl`, `proposals.json`, `inbox.md` | No |
+| `logs/brain.log` | Output of the daily brain run started by `main.py` | No |
 
 To reset the session grading, stop the agent and delete `state/session_levels.json`. All sessions start from `NORMAL` and are re-graded on the first cycle.
 
@@ -119,6 +122,7 @@ python tests/test_cycle5_regressions.py
 python tests/test_daily_loss_stop.py
 python tests/test_chat_logger.py
 python tests/test_market_hours.py
+python tests/test_brain.py
 ```
 
 **Sandboxed end-to-end cycle.** It uses the live terminal for data, with `order_send` patched:
