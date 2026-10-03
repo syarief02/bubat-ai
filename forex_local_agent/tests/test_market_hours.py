@@ -12,7 +12,7 @@ import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 TEST_DIR = Path(__file__).resolve().parent
 AGENT_DIR = TEST_DIR.parent
@@ -61,6 +61,31 @@ class TestMarketHours(unittest.TestCase):
         self.assertEqual(next_market_open(utc(2026, 10, 4, 20, 0)), sunday_open)    # Sun before open
         now = utc(2026, 10, 6, 10, 0)
         self.assertEqual(next_market_open(now), now)                                # already open
+
+
+class TestSessionLabel(unittest.TestCase):
+    """The assistant banner said "New York (US Session)" on Saturday 2026-10-03 19:22 UTC."""
+
+    def _session_at(self, when):
+        from core import web_surfer
+
+        class Fixed(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return when
+
+        with patch.object(web_surfer, "datetime", Fixed):
+            return web_surfer.WebSurfer().get_current_market_session()
+
+    def test_weekend_is_closed(self):
+        s = self._session_at(utc(2026, 10, 3, 19, 22))
+        self.assertTrue(s["session_summary"].startswith("Market closed"))
+        self.assertIn("Sun 21:00", s["session_summary"])
+        self.assertEqual(s["best_pairs_for_session"], [])
+
+    def test_weekday_sessions_unchanged(self):
+        s = self._session_at(utc(2026, 10, 6, 14, 0))
+        self.assertIn("OVERLAP", s["session_summary"])
 
 
 class TestMainLoopPause(unittest.TestCase):

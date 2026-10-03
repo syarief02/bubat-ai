@@ -3,7 +3,7 @@ title Bubat AI — Stop All Services
 cd /d "%~dp0"
 
 echo ====================================================================
-echo             BUBAT AI — STOPPING ALL SERVICES & SERVERS
+echo             BUBAT AI — STOPPING ALL SERVICES AND SERVERS
 echo ====================================================================
 echo.
 

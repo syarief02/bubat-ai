@@ -13,6 +13,11 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from loguru import logger
 
+try:
+    from core.mt5_time import market_open, next_market_open
+except ImportError:
+    from forex_local_agent.core.mt5_time import market_open, next_market_open
+
 
 def parse_duckduckgo_html(html: str, query: str, max_results: int) -> List[Dict[str, str]]:
     """Organic DuckDuckGo results (ads skipped) as {title, url, snippet, query}."""
@@ -50,6 +55,16 @@ class WebSurfer:
         """Calculates active global forex market sessions based on UTC clock."""
         now_utc = datetime.now(timezone.utc)
         hour = now_utc.hour + now_utc.minute / 60.0
+
+        # Weekend: the clock-hour sessions below would report "New York" on a Saturday
+        if not market_open(now_utc):
+            reopen = next_market_open(now_utc)
+            return {
+                "utc_time": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "active_sessions": [],
+                "session_summary": f"Market closed (weekend) - reopens {reopen.strftime('%a %H:%M')} UTC",
+                "best_pairs_for_session": [],
+            }
 
         sessions = []
         # Sydney: 21:00 - 06:00 UTC

@@ -1,42 +1,28 @@
 @echo off
-title Bubat AI - Local Autonomous System Assistant
-cls
+title Bubat AI - Autonomous System Assistant
+cd /d "%~dp0"
 
 echo ======================================================================
-echo          BUBAT AI - LOCAL AUTONOMOUS SYSTEM & CODING AGENT
+echo          BUBAT AI - AUTONOMOUS SYSTEM AND CODING AGENT
 echo ======================================================================
 echo.
 
-:: 1. Check if Ollama server is already running
-curl -s http://localhost:11434/api/tags >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [INFO] Ollama server is not running. Starting background server...
-    start /b "" "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve >nul 2>&1
-    
-    :: Wait up to 10 seconds for Ollama to start
-    set /a count=0
-    :wait_ollama
-    timeout /t 1 /nobreak >nul
-    curl -s http://localhost:11434/api/tags >nul 2>&1
-    if %ERRORLEVEL% EQU 0 goto ollama_ready
-    set /a count+=1
-    if %count% LSS 10 goto wait_ollama
-    echo [WARNING] Ollama server did not respond quickly. Launching agent anyway...
+:: Start Ollama if it is not already listening on port 11434.
+:: (No labels or %%vars%% inside this block: cmd parses a whole block at once, and the old
+::  wait loop here made every start abort with "10 was unexpected at this time".)
+netstat -ano | findstr 11434 | findstr LISTENING >nul
+if %errorlevel% neq 0 (
+    echo [*] Starting background Ollama server...
+    start "" /B "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve >nul 2>&1
+    timeout /t 5 /nobreak >nul
 )
 
-:ollama_ready
-echo [INFO] Ollama server is ready.
-echo [INFO] Launching Bubat Autonomous System Assistant...
+echo [*] Launching the assistant (first answer can take a minute while the model loads)...
 echo.
-
-cd /d "%~dp0"
 python local_assistant.py
 
-if %ERRORLEVEL% NEQ 0 (
+if %errorlevel% neq 0 (
     echo.
-    echo [ERROR] Assistant exited with code %ERRORLEVEL%.
+    echo [!] The assistant stopped with error code %errorlevel%.
+    pause
 )
-
-echo.
-pause
-
