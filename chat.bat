@@ -1,9 +1,9 @@
 @echo off
-title Bubat AI — Interactive Intelligence Chat
+title Bubat AI - Interactive Intelligence Chat
 cd /d "%~dp0forex_local_agent"
 
 echo ====================================================================
-echo             BUBAT AI — INTERACTIVE AI AGENT CHAT
+echo             BUBAT AI - INTERACTIVE AI AGENT CHAT
 echo ====================================================================
 echo.
 

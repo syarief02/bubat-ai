@@ -1,9 +1,9 @@
 @echo off
-title Bubat AI — Autonomous Forex Trading Agent
+title Bubat AI - Autonomous Forex Trading Agent
 cd /d "%~dp0forex_local_agent"
 
 echo ====================================================================
-echo             BUBAT AI — LOCAL AUTONOMOUS FOREX AGENT
+echo             BUBAT AI - LOCAL AUTONOMOUS FOREX AGENT
 echo ====================================================================
 echo.
 
