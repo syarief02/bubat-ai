@@ -235,7 +235,7 @@ class Brain:
             lines.append(f"- **{p['id']}** [{p['risk']}] {_describe(p)}")
             lines.append(f"  - Why: {p['rationale']}")
             lines.append(f"  - Evidence: {p['evidence']}")
-        lines += ["", "Approve with `python -m brain approve <id>`, reject with `python -m brain reject <id>`.", ""]
+        lines += ["", "Decide in brain.bat: type `approve <id>` or `reject <id> <reason>`.", ""]
         ideas = [p for p in self.proposals.load() if p["status"] == "noted"][-5:]
         if ideas:
             lines += ["## Ideas for the owner (code changes)"] + [f"- **{p['id']}** {p['text']}" for p in ideas] + [""]
