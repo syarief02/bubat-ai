@@ -95,8 +95,26 @@ class BrainLLM:
             logger.warning(f"[Brain] no usable chat reply at think={level!r}; trying the next level")
         return None
 
+    def chat_step(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], think: Any = None,
+                  on_text: Callable[[str], None] = None, on_thinking: Callable[[int], None] = None
+                  ) -> Optional[Dict[str, Any]]:
+        """One native tool-calling turn (local_assistant.py). Returns the assistant message, or None.
+
+        The message keeps `thinking`, so it can go back into the history: gpt-oss reasons better across
+        tool calls when it sees its earlier reasoning.
+        """
+        text, data = self._generate("", "", self.think if think is None else think, messages=messages,
+                                    tools=tools, on_text=on_text, on_thinking=on_thinking)
+        if data is None:
+            return None
+        msg = data.get("message") or {}
+        return {"role": "assistant", "content": text or "", "tool_calls": msg.get("tool_calls") or [],
+                "thinking": data.get("thinking") or msg.get("thinking") or "",
+                "done_reason": data.get("done_reason")}
+
     def _generate(self, system: str, prompt: str, think: Any, messages: List[Dict[str, str]] = None,
-                  on_text: Callable[[str], None] = None, on_thinking: Callable[[int], None] = None):
+                  on_text: Callable[[str], None] = None, on_thinking: Callable[[int], None] = None,
+                  tools: List[Dict[str, Any]] = None):
         stream = on_text is not None
         payload = {
             "model": self.model,
@@ -108,6 +126,8 @@ class BrainLLM:
             payload.update(system=system, prompt=prompt, format="json")
         else:
             payload["messages"] = messages
+        if tools:
+            payload["tools"] = tools
         # Leave num_ctx unset when the brain shares the trading model: a different value would load a second copy
         if self.num_ctx:
             payload["options"]["num_ctx"] = self.num_ctx
@@ -141,7 +161,7 @@ class BrainLLM:
 
     def _stream(self, url: str, payload: Dict[str, Any], on_text, on_thinking) -> Dict[str, Any]:
         """Read Ollama's line-delimited stream; returns the final chunk with the full text and thinking."""
-        content, thinking, final = [], [], {}
+        content, thinking, tool_calls, final = [], [], [], {}
         with httpx.stream("POST", url, json=payload, timeout=self.timeout) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
@@ -153,13 +173,14 @@ class BrainLLM:
                     thinking.append(msg["thinking"])
                     if on_thinking:
                         on_thinking(sum(map(len, thinking)))
+                tool_calls += msg.get("tool_calls") or []
                 piece = msg.get("content") or chunk.get("response") or ""
                 if piece:
                     content.append(piece)
                     on_text(piece)
                 if chunk.get("done"):
                     final = chunk
-        final["message"] = {"role": "assistant", "content": "".join(content)}
+        final["message"] = {"role": "assistant", "content": "".join(content), "tool_calls": tool_calls}
         final["thinking"] = "".join(thinking)
         return final
 

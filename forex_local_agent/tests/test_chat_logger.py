@@ -218,10 +218,14 @@ class TestLocalAssistantIntegration(unittest.TestCase):
         parsed_uuid = uuid.UUID(agent.session_id)
         self.assertEqual(str(parsed_uuid), agent.session_id)
 
-        tool_call_json = '```json\n{"tool": "list_directory", "arguments": {"path": "."}}\n```'
+        # Native tool calling: one tool-call message, then the final answer
+        tool_call_msg = {"role": "assistant", "content": "", "thinking": "", "done_reason": "stop",
+                         "tool_calls": [{"function": {"name": "list_directory", "arguments": {"path": "."}}}]}
         final_answer = "Directory listed successfully."
+        final_msg = {"role": "assistant", "content": final_answer, "thinking": "", "tool_calls": [],
+                     "done_reason": "stop"}
 
-        with patch.object(agent, "_call_ollama", side_effect=[tool_call_json, final_answer]):
+        with patch.object(agent.llm, "chat_step", side_effect=[tool_call_msg, final_msg]):
             with patch.object(agent.executor, "execute", return_value="file1.py token=secret_token_123"):
                 response = agent.chat_turn("List files with key=my_key")
 

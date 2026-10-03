@@ -255,7 +255,11 @@ With `"auto_approve": false` and a configured number, each trade proposal is sen
   * **Facts computed in code, not read by the model:** `brain/digest.py` `key_facts()` turns the report into plain conclusions, for example "SPREAD wall BLOCKED 86 trades that were never taken: they would have lost money, so the wall avoided losses", or "ROLLOVER: too few trades to judge". `proposal_check()` tests each open proposal against the report. For P3 that reads: a 0.85 threshold skips 92% of trades, and the 31 it keeps still lose. The chat and the brain's reflection both use these checks instead of the brain's own evidence text, which had misread the tables.
   * **Streaming:** deep answers appear as they are written, with a live thinking counter (about 30–50 s on weekends, about 1.5–2 min while trading). News or event questions add the latest headlines as untrusted data.
   * **Owner decisions:** `proposals` lists them. `approve P5` and `reject P5 <reason>` (also `lulus` / `tolak`) ask for y/n confirmation, then run the same gated apply as `brain.bat`. These commands are handled in code: the model has no tool that can approve anything.
-* `local_assistant.py` (`assistant.bat`): a tool-using local assistant (shell commands, file read/write, Supabase queries, MT5 status, web search). The repo-root `local_assistant.py` is a launcher shim for the copy in `forex_local_agent/`.
+* `local_assistant.py` (`assistant.bat`): an autonomous engineer with **full control** of the machine: PowerShell, files, Supabase SQL, MT5 status, market scans, web search and pages, the bot's results and the brain's proposals, and the test suites. The repo-root `local_assistant.py` is a launcher shim for the copy in `forex_local_agent/`.
+  * **Reasoning model with native tool calling:** `gpt-oss:20b` at `assistant.think` ("medium"). Like the brain, it runs on the CPU while the market is open and uses the GPU on weekends.
+  * **Careful method, built into its prompt and tools:** it inspects before changing, edits exact text (`edit_file` refuses missing or ambiguous matches), syntax-checks every Python and JSON file it writes, re-reads its changes, runs the tests, and reports only what it verified. `run_tests` counts a missing test file or "Ran 0 tests" as a failure, never a pass.
+  * **Safety net, not restrictions:** every changed file is backed up to `state/assistant_backups/`, and `undo` restores the last change (`/changes` lists them). Only irreversible actions ask first: recursive delete, force push, `git reset --hard`, stopping processes, `DROP`/`TRUNCATE`, or `DELETE`/`UPDATE` without `WHERE`. Set `assistant.confirm_irreversible: false` for no confirmations at all. Secret values in `.env` are masked when it reads the file.
+  * It knows the project layout and the bot's live state, and keeps a long session inside its context window by trimming old tool output first.
 
 ---
 
@@ -497,7 +501,7 @@ One block per session (`ASIA`, `LONDON`, `LONDON_NY_OVERLAP`, `NEW_YORK`, `ROLLO
 `enabled`, `mode` (shadow only), `hours_utc`, `exit_hour_utc`, `symbols`, `bb_period`, `bb_dev`, `rsi_low`, `sl_atr`, `sl_floor_pips`, `tp_r`, `promote_after_trades`, `promote_min_avg_r`.
 
 ### Other Sections
-`trading` (symbols, `timeframe: "M5"`, bars, order comment), `active_model` and `ollama_think` (the model used by the agent, chat and assistant; `false` skips qwen3's hidden reasoning), `model_upgrade` (weekly model scan; off unless `enabled: true`, since it swaps in any model passing a trivial audition), `brain` (`enabled`, `daily_run_utc`, `report_hours` window, `model`, `think` (true/false or low/medium/high), `num_predict`, `num_ctx`, `num_gpu` (0 = CPU only), `gpu_when_market_closed`, research/proposal limits), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
+`trading` (symbols, `timeframe: "M5"`, bars, order comment), `active_model` and `ollama_think` (the model used by the agent, chat and assistant; `false` skips qwen3's hidden reasoning), `model_upgrade` (weekly model scan; off unless `enabled: true`, since it swaps in any model passing a trivial audition), `assistant` (`model`, `think`, `max_steps`, `confirm_irreversible`), `brain` (`enabled`, `daily_run_utc`, `report_hours` window, `model`, `think` (true/false or low/medium/high), `num_predict`, `num_ctx`, `num_gpu` (0 = CPU only), `gpu_when_market_closed`, research/proposal limits), `memory` (ChromaDB collection, `similarity_top_k`), `alerts`, and service URLs (`ollama_base_url`, `searxng_url`).
 
 ---
 
@@ -514,6 +518,7 @@ python forex_local_agent/tests/test_chat_logger.py
 python forex_local_agent/tests/test_market_hours.py       # pause while the FX market is closed
 python forex_local_agent/tests/test_brain.py              # brain validation, gates/rollback, cycle, web parsing
 python forex_local_agent/tests/test_chat_upgrade.py       # chat language, deep routing, bot status, owner decisions
+python forex_local_agent/tests/test_assistant.py          # assistant edits, backups/undo, run_tests honesty, irreversible checks, loop
 ```
 
 **Sandboxed end-to-end cycle.** `test_mock_cycle.py` uses the **live MT5 terminal** for data, with `order_send` patched so nothing reaches the broker:
@@ -530,7 +535,7 @@ It covers MT5 connection, bars and H1 trend, news and calendar, the LLM parse, A
 |---|---|
 | `run_agent.bat` | Starts Ollama if needed, then runs the trading loop (`main.py`) |
 | `chat.bat` | Chat about the market and your bot: live MT5 scans, deep reasoning for why/should questions, `approve` / `reject` proposals |
-| `assistant.bat` | Tool-using local assistant |
+| `assistant.bat` | Autonomous engineer with full machine control (reasoning model, verify-every-change, `undo`) |
 | `brain.bat` | Shows the brain's latest assessment and proposals; `brain.bat approve P3`, `brain.bat reject P3 reason`, `brain.bat run --force` |
 | `stop_all.bat` | Stops Ollama and all agent processes |
 

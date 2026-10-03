@@ -40,7 +40,7 @@ This page covers working *inside* the package: what each module does, where runt
 | `maintenance/execution_quality.py` | Entry timing, management, spread cost, per-session breakdown, Asia shadow progress |
 | `maintenance/model_updater.py` | Weekly model discovery and hot-swap |
 | `chat.py`, `chat_logger.py` | Market chat with live scans and account status; secret-scrubbed session log |
-| `local_assistant.py` | Tool-using local assistant (the repo-root `local_assistant.py` is a launcher shim for this file) |
+| `local_assistant.py` | Autonomous engineer: `gpt-oss` with native tool calls, exact edits, automatic backups and `undo`, honest `run_tests` (the repo-root `local_assistant.py` is a launcher shim for this file) |
 
 ---
 
@@ -124,6 +124,7 @@ python tests/test_chat_logger.py
 python tests/test_market_hours.py
 python tests/test_brain.py
 python tests/test_chat_upgrade.py
+python tests/test_assistant.py
 ```
 
 **Sandboxed end-to-end cycle.** It uses the live terminal for data, with `order_send` patched:
